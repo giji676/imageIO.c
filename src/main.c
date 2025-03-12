@@ -20,7 +20,8 @@ void processFile(char *filename) {
 }
 
 int main() {
-    char filename[] = "assets/bmpExample.bmp";
+    //char filename[] = "assets/bmpExample.bmp";
+    char filename[] = "assets/pngExample.png";
     processFile(filename);
 
     return 0;

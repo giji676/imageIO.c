@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include "./bmp.h"
 
-void bmp_printFileHeader(struct fileHeader *header) {
+void bmp_printFileHeader(struct bmp_fileHeader *header) {
     printf("signature: %c%c\n", header->signature[0],
                                 header->signature[1]);
     printf("size: %d\n", header->size);
@@ -12,7 +12,7 @@ void bmp_printFileHeader(struct fileHeader *header) {
     printf("offset: %d\n", header->offset);
 }
 
-void bmp_printBitmapInfoHeader(struct bitmapInfoHeader *header) {
+void bmp_printBitmapInfoHeader(struct bmp_bitmapInfoHeader *header) {
     printf("size: %d\n", header->size);
     printf("width: %d\n", header->width);
     printf("height: %d\n", header->height);
@@ -27,7 +27,7 @@ void bmp_printBitmapInfoHeader(struct bitmapInfoHeader *header) {
 }
 
 void bmp_printPixels(void *pixels,
-                 struct bitmapInfoHeader *header) {
+                 struct bmp_bitmapInfoHeader *header) {
     for (int i = 0; i < header->height; ++i) {
         for (int j = 0; j < header->width; ++j) {
             if (header->bitCount == 24) {
@@ -43,16 +43,16 @@ void bmp_printPixels(void *pixels,
     }
 }
 
-int bmp_readFileHeader(FILE *fptr, struct fileHeader *header) {
-    if (fread(header, sizeof(struct fileHeader), 1, fptr) != 1) {
+int bmp_readFileHeader(FILE *fptr, struct bmp_fileHeader *header) {
+    if (fread(header, sizeof(struct bmp_fileHeader), 1, fptr) != 1) {
         printf("Failed to read file header\n");
         return -1;
     }
     return 1;
 }
 
-int bmp_readBitmapInfoHeader(FILE *fptr, struct bitmapInfoHeader *header) {
-    if (fread(header, sizeof(struct bitmapInfoHeader), 1, fptr) != 1) {
+int bmp_readBitmapInfoHeader(FILE *fptr, struct bmp_bitmapInfoHeader *header) {
+    if (fread(header, sizeof(struct bmp_bitmapInfoHeader), 1, fptr) != 1) {
         printf("Failed to read bitmap info header\n");
         return -1;
     }
@@ -69,7 +69,7 @@ void* bmp_mallocPixels(int width, int height, size_t size) {
 }
 
 void* bmp_readPixels(FILE *fptr,
-                struct bitmapInfoHeader *header) {
+                struct bmp_bitmapInfoHeader *header) {
     int rowSize = ((header->bitCount *
                     header->width + 31) / 32) * 4;
     printf("Row size: %d\n", rowSize);
@@ -138,32 +138,32 @@ void bmp_open(char filename[]) {
         return;
     }
 
-    struct fileHeader fileHeader;
-    if (bmp_readFileHeader(fptr, &fileHeader) != 1) {
+    struct bmp_fileHeader bmp_fileHeader;
+    if (bmp_readFileHeader(fptr, &bmp_fileHeader) != 1) {
         return;
     }
     printf("\n");
     printf("File Header\n");
-    bmp_printFileHeader(&fileHeader);
+    bmp_printFileHeader(&bmp_fileHeader);
 
-    fseek(fptr, sizeof(struct fileHeader), SEEK_SET);
+    fseek(fptr, sizeof(struct bmp_fileHeader), SEEK_SET);
 
-    struct bitmapInfoHeader bitmapInfoHeader;
-    if (bmp_readBitmapInfoHeader(fptr, &bitmapInfoHeader) != 1) {
+    struct bmp_bitmapInfoHeader bmp_bitmapInfoHeader;
+    if (bmp_readBitmapInfoHeader(fptr, &bmp_bitmapInfoHeader) != 1) {
         return;
     }
     printf("\n");
     printf("Bitmap Info Header\n");
-    bmp_printBitmapInfoHeader(&bitmapInfoHeader);
+    bmp_printBitmapInfoHeader(&bmp_bitmapInfoHeader);
 
-    fseek(fptr, fileHeader.offset, SEEK_SET);
-    void *pixels = bmp_readPixels(fptr, &bitmapInfoHeader);
+    fseek(fptr, bmp_fileHeader.offset, SEEK_SET);
+    void *pixels = bmp_readPixels(fptr, &bmp_bitmapInfoHeader);
     if (pixels == NULL) {
         return;
     }
     printf("\n");
     printf("Pixels\n");
-    bmp_printPixels(pixels, &bitmapInfoHeader);
+    bmp_printPixels(pixels, &bmp_bitmapInfoHeader);
 
     fclose(fptr);
     free(pixels);
