@@ -26,6 +26,7 @@ struct __attribute__((packed)) png_IHDR {
     uint8_t interlaceMethod;
 };
 
+void png_printIHDR(struct png_IHDR *ihdr);
 void png_printFileSignature(struct png_fileSignature *fileSignature);
 void png_printChunkLayout(struct png_chunkLayout *chunkLayout);
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
