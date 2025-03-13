@@ -16,17 +16,20 @@ void png_printIHDR(struct png_IHDR *ihdr) {
     printf("interlaceMethod: %u\n", ihdr->interlaceMethod);
 }
 
-void png_printChunkLayout(struct png_chunkLayout *chunk) {
+void png_printChunk(struct png_chunk *chunk) {
     printf("\n");
-    printf("Chunk Layout\n");
+    printf("Chunk\n");
     printf("length: %u\n", chunk->length);
     printf("chunkType: %.4s\n", chunk->chunkType);
     if (strncmp(chunk->chunkType, "IHDR", 4) == 0 && chunk->length == 13) {
         png_printIHDR((struct png_IHDR *)chunk->chunkData);
     } else {
-        printf("chunkData: ");
+        printf("chunkData:\n");
         for (uint32_t i = 0; i < chunk->length; ++i) {
-            printf("%d ", ((uint8_t *)chunk->chunkData)[i]);
+            if (i % 16 == 0) {  // Add a newline every 16 bytes for better readability
+                printf("\n");
+            }
+            printf("%02x ", ((unsigned char *)chunk->chunkData)[i]);
         }
     }
     printf("\n");
@@ -43,7 +46,7 @@ void png_printFileSignature(struct png_fileSignature *fileSignature) {
     printf("\n");
 }
 
-int png_readChunkLayout(FILE *fptr, struct png_chunkLayout *chunk) {
+int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
     if (fread(chunk,
               (sizeof(chunk->length) + sizeof(chunk->chunkType)),
               1, fptr) != 1) {
@@ -103,11 +106,18 @@ void png_open(char filename[]) {
     }
     png_printFileSignature(&png_fileSignature);
 
-    struct png_chunkLayout png_chunkLayout;
-    if (png_readChunkLayout(fptr, &png_chunkLayout) != 1) {
+    struct png_chunk png_chunk0;
+    if (png_readChunk(fptr, &png_chunk0) != 1) {
         return;
     }
-    png_printChunkLayout(&png_chunkLayout);
+    png_printChunk(&png_chunk0);
+
+    struct png_chunk png_chunk1;
+    if (png_readChunk(fptr, &png_chunk1) != 1) {
+        return;
+    }
+    png_printChunk(&png_chunk1);
+
     fclose(fptr);
-    free(png_chunkLayout.chunkData);
+    free(png_chunk0.chunkData);
 }
