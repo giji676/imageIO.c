@@ -28,9 +28,10 @@ struct __attribute__((packed)) png_IHDR {
 
 void png_printIHDR(struct png_IHDR *ihdr);
 void png_printFileSignature(struct png_fileSignature *fileSignature);
-void png_printChunk(struct png_chunk *chunkLayout);
+void png_printChunk(struct png_chunk *chunk);
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
-int png_readChunk(FILE *fptr, struct png_chunk *chunkLayout);
+int png_readChunks(FILE *fptr, struct png_chunk **chunk);
+int png_readChunk(FILE *fptr, struct png_chunk *chunk);
 void png_open(char filename[]);
 
 #endif  // PNG_H

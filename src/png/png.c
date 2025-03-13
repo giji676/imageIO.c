@@ -46,6 +46,14 @@ void png_printFileSignature(struct png_fileSignature *fileSignature) {
     printf("\n");
 }
 
+int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature) {
+    if (fread(fileSignature, sizeof(struct png_fileSignature), 1, fptr) != 1) {
+        printf("Failed to read file signature\n");
+        return -1;
+    }
+    return 1;
+}
+
 int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
     if (fread(chunk,
               (sizeof(chunk->length) + sizeof(chunk->chunkType)),
@@ -60,8 +68,9 @@ int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
         printf("Failed to allocate memory for chunk data\n");
         return -1;
     }
-
-    if (fread(chunk->chunkData, chunk->length, 1, fptr) != 1) {
+    if (chunk->length == 0) {
+        chunk->chunkData = NULL;
+    } else if (fread(chunk->chunkData, chunk->length, 1, fptr) != 1) {
         printf("Failed to read chunk data\n");
         free(chunk->chunkData);
         return -1;
@@ -84,12 +93,35 @@ int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
     return 1;
 }
 
-int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature) {
-    if (fread(fileSignature, sizeof(struct png_fileSignature), 1, fptr) != 1) {
-        printf("Failed to read file signature\n");
-        return -1;
+int png_readChunks(FILE *fptr, struct png_chunk **chunks) {
+    int chunkCount = 0;
+
+    while (1) {
+        if (chunkCount > 0) {
+            size_t cSize = (chunkCount+1)*sizeof(struct png_chunk);
+            struct png_chunk *temp = realloc(*chunks, cSize);
+            if (temp == NULL) {
+                printf("Failed to allocte memory for chunks\n");
+                break;
+            }
+            *chunks = temp;
+        }
+        if (png_readChunk(fptr, &(*chunks)[chunkCount]) != 1) {
+            printf("Error reading chunk or end of file\n");
+            break;
+        }
+
+        png_printChunk(&(*chunks)[chunkCount]);
+
+        if (strncmp((*chunks)[chunkCount].chunkType, "IEND", 4) == 0) {
+            printf("End of file reached\n");
+            chunkCount++;
+            break;
+        }
+        chunkCount++;
     }
-    return 1;
+
+    return chunkCount;
 }
 
 void png_open(char filename[]) {
@@ -106,18 +138,22 @@ void png_open(char filename[]) {
     }
     png_printFileSignature(&png_fileSignature);
 
-    struct png_chunk png_chunk0;
-    if (png_readChunk(fptr, &png_chunk0) != 1) {
+    struct png_chunk *chunks = malloc(sizeof(struct png_chunk));
+    if (chunks == NULL) {
+        printf("Failed to allocte memory for chunks\n");
         return;
     }
-    png_printChunk(&png_chunk0);
 
-    struct png_chunk png_chunk1;
-    if (png_readChunk(fptr, &png_chunk1) != 1) {
+    int chunkCount = png_readChunks(fptr, &chunks);
+    if (chunkCount < 0) {
+        printf("Error reading chunks\n");
+        fclose(fptr);
         return;
     }
-    png_printChunk(&png_chunk1);
-
     fclose(fptr);
-    free(png_chunk0.chunkData);
+
+    for (int i = 0; i < chunkCount; ++i) {
+        free(chunks[i].chunkData);
+    }
+    free(chunks);
 }
