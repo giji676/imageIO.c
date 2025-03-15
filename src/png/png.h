@@ -26,12 +26,20 @@ struct __attribute__((packed)) png_IHDR {
     uint8_t interlaceMethod;
 };
 
+struct png_zTXt {
+    char *keyword;
+    uint8_t *compMethod;
+    char *compText;
+};
+
 void png_printIHDR(struct png_IHDR *ihdr);
+void png_printzTXt(void *data);
 void png_printFileSignature(struct png_fileSignature *fileSignature);
 void png_printChunk(struct png_chunk *chunk);
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
 int png_readChunks(FILE *fptr, struct png_chunk **chunk);
 int png_readChunk(FILE *fptr, struct png_chunk *chunk);
+void png_interpretzTXt(void *data, uint32_t length);
 void png_open(char filename[]);
 
 #endif  // PNG_H
