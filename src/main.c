@@ -21,6 +21,7 @@ void processFile(char *filename) {
 
 int main() {
     //char filename[] = "assets/bmpExample.bmp";
+    //char filename[] = "assets/pngExampleWrongCRC.png"; // Last chunk has wrong CRC
     char filename[] = "assets/pngExample.png";
     processFile(filename);
 

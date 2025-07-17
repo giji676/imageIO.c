@@ -3,10 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include "./png.h"
+#include "../crc/crc.h"
 
 void png_printIHDR(struct png_IHDR *ihdr) {
-    printf("width: %u\n", ihdr->width);
-    printf("height: %u\n", ihdr->height);
+    uint32_t width = __builtin_bswap32(ihdr->width);
+    uint32_t height = __builtin_bswap32(ihdr->height);
+    printf("width: %u\n", width);
+    printf("height: %u\n", height);
     printf("bitDepth: %u\n", ihdr->bitDepth);
     printf("colorType: %u\n", ihdr->colorType);
     printf("compressionMethod: %u\n", ihdr->compressionMethod);
@@ -33,7 +36,40 @@ void png_printChunk(struct png_chunk *chunk) {
         }
     }
     printf("\n");
-    printf("crc (Hex): %08X\n", chunk->crc);
+    printf("expected crc: 0x%08X\n", chunk->crc);
+    int crc_compare_res = png_compareCRC(chunk);
+    if (crc_compare_res == 1) {
+        //printf("CRC MATCHING\n");
+    } else {
+        printf("CRC NOT MATCHING\n");
+    }
+}
+
+int png_compareCRC(struct png_chunk *chunk) {
+    int crc_inp_len = sizeof(chunk->chunkType) + (int)chunk->length;
+    unsigned char *buff = malloc(crc_inp_len);
+    if (buff == NULL) {
+        printf("Failed to allocate memory for chunk crc buffer\n");
+        return -1;
+    }
+    memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
+    memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
+    /*
+    printf("raw buff:\n");
+    for (int i = 0; i < crc_inp_len; i++) {
+        printf("0x%02X ", buff[i]);
+    }
+    printf("\n");
+    */
+    
+    unsigned long res = crc(buff, crc_inp_len);
+    printf("calculated crc: 0x%lX\n", res);
+    free(buff);
+    if (res == chunk->crc) {
+	return 1;
+    } else {
+	return 0;
+    }
 }
 
 void png_interpretzTXt(void *data, uint32_t length) {
@@ -115,10 +151,12 @@ int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
     }
 
     if (strncmp(chunk->chunkType, "IHDR", 4) == 0 && chunk->length == 13) {
+	/*
         ((struct png_IHDR *)chunk->chunkData)->width =
             __builtin_bswap32(((struct png_IHDR *)chunk->chunkData)->width);
         ((struct png_IHDR *)chunk->chunkData)->height =
             __builtin_bswap32(((struct png_IHDR *)chunk->chunkData)->height);
+        */
     } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
         //png_interpretzTXt(chunk->chunkData, chunk->length);
     }
@@ -153,7 +191,7 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks) {
         png_printChunk(&(*chunks)[chunkCount]);
 
         if (strncmp((*chunks)[chunkCount].chunkType, "IEND", 4) == 0) {
-            printf("End of file reached\n");
+            printf("\nEnd of file reached\n");
             chunkCount++;
             break;
         }
@@ -165,6 +203,8 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks) {
 
 void png_open(char filename[]) {
     FILE *fptr;
+
+    make_crc_table();
 
     if ((fptr = fopen(filename, "rb")) == NULL) {
         printf("Failed to open file %s\n", filename);

@@ -41,5 +41,6 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunk);
 int png_readChunk(FILE *fptr, struct png_chunk *chunk);
 void png_interpretzTXt(void *data, uint32_t length);
 void png_open(char filename[]);
+int png_compareCRC(struct png_chunk *chunk);
 
 #endif  // PNG_H
