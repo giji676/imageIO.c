@@ -1,6 +1,16 @@
 #include <stdio.h>
 #include "./image_common.h"
 
+// Reverse the lowest n bits of x
+uint32_t reverse_bits(uint32_t x, int n) {
+    uint32_t r = 0;
+    for (int i = 0; i < n; i++) {
+        r <<= 1;
+        r |= (x >> i) & 1;
+    }
+    return r;
+}
+
 void print_binary(uint32_t value, int bits) {
     for (int i = bits - 1; i >= 0; i--) {
         printf("%c", (value & (1 << i)) ? '1' : '0');

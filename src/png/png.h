@@ -26,22 +26,40 @@ struct __attribute__((packed)) png_IHDR {
     uint8_t interlaceMethod;
 };
 
+struct png_IDAT {
+    uint8_t cmf;
+    uint8_t flg;
+    uint8_t cm;
+    uint8_t cinfo;
+    uint8_t fcheck;
+    uint8_t fdict;
+    uint8_t flevel;
+    uint32_t data_length;
+    uint8_t *data;
+    uint32_t adler32;
+};
+
 struct png_zTXt {
     char *keyword;
     uint8_t *compMethod;
     char *compText;
 };
 
-void png_printIHDR(struct png_IHDR *ihdr);
-void png_printIDAT(void *data, uint32_t length);
-void png_printzTXt(void *data);
-void png_printFileSignature(struct png_fileSignature *fileSignature);
-void png_printChunk(struct png_chunk *chunk);
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
 int png_readChunks(FILE *fptr, struct png_chunk **chunk);
 int png_readChunk(FILE *fptr, struct png_chunk *chunk);
+int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat);
+
+void png_printIHDR(struct png_IHDR *ihdr);
+void png_printIDAT_(void *data, uint32_t length);
+void png_printzTXt(void *data);
+void png_printFileSignature(struct png_fileSignature *fileSignature);
+void png_printChunk(struct png_chunk *chunk);
+void png_printIDAT(struct png_IDAT *idat);
+
 void png_interpretzTXt(void *data, uint32_t length);
 void png_open(char filename[]);
 int png_compareCRC(struct png_chunk *chunk);
+
 
 #endif  // PNG_H

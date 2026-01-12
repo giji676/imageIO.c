@@ -6,65 +6,77 @@
 #include <string.h>
 #define MAX_OUTPUT 1024
 
-// Reverse the lowest n bits of x
-uint32_t reverse_bits(uint32_t x, int n) {
-    uint32_t r = 0;
-    for (int i = 0; i < n; i++) {
-        r <<= 1;
-        r |= (x >> i) & 1;
-    }
-    return r;
-}
-
-void png_printIDAT(void *data, uint32_t length) {
-    FILE *f = fopen("idat.zlib", "wb");
-    fwrite(data, 1, length, f);
-    fclose(f);
-    printf("IDAT chunk data (%u bytes):\n", length);
-    for (uint32_t i = 0; i < length; ++i) {
-        if (i % 16 == 0 && i != 0) {
+void png_printIDAT(struct png_IDAT *idat) {
+    printf("CMF: 0x%02X\n", idat->cmf);
+    printf("CM: %u\n", idat->cm);
+    printf("CINFO: %u\n", idat->cinfo);
+    printf("FLG: 0x%02X\n", idat->flg);
+    printf("FCHECK: %u\n", idat->fcheck);
+    printf("FDICT: %u\n", idat->fdict);
+    printf("FLEVEL: %u\n", idat->flevel);
+    printf("DATA_LENGTH: %u\n", idat->data_length);
+    printf("DATA:\n");
+    for (uint32_t i = 0; i < idat->data_length; ++i) {
+        printf("%02x ", idat->data[i]);
+        if (i > 0 && i % 16 == 15) {
             printf("\n");
         }
-        printf("%02x ", ((unsigned char *)data)[i]);
     }
     printf("\n");
+    printf("ADLER32: 0x%08X\n", idat->adler32);
+}
+
+int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat) {
+    struct bitStream bs;
+    bitstream_init(&bs, (uint8_t *)data, length);
 
     uint8_t cmf = ((uint8_t *)data)[0];
     uint8_t flg = ((uint8_t *)data)[1];
-    if ((cmf * 256 + flg) % 31 != 0) {
+
+    if (((cmf << 8) | flg) % 31 != 0) {
         printf("Invalid zlib header\n");
-        return;
-    }
-    printf("CMF: 0x%02X\n", cmf);
-    printf("FLG: 0x%02X\n", flg);
-    if ((cmf * 256 + (uint16_t)flg) % 31 != 0) {
-        printf("Invalid zlib header: CMF and FLG are not consistent\n");
-        return;
+        return -1;
     }
 
-    struct bitStream cmf_bs;
-    bitstream_init(&cmf_bs, &cmf, sizeof(cmf));
     uint32_t cm, cinfo;
-    bitstream_read(&cmf_bs, 4, &cm);
-    bitstream_read(&cmf_bs, 4, &cinfo);
-    printf("CM: %u ", cm);
-    printf("CINFO: %u\n", cinfo);
-
-    struct bitStream flg_bs;
-    bitstream_init(&flg_bs, &flg, sizeof(cmf));
     uint32_t fcheck, fdict, flevel;
-    bitstream_read(&flg_bs, 5, &fcheck);
-    bitstream_read(&flg_bs, 1, &fdict);
-    bitstream_read(&flg_bs, 2, &flevel);
-    printf("FCHECK: %u ", fcheck);
-    printf("FDICT: %u ", fdict);
-    printf("FLEVEL: %u\n", flevel);
+    bitstream_read(&bs, 4, &cm);
+    bitstream_read(&bs, 4, &cinfo);
+    bitstream_read(&bs, 5, &fcheck);
+    bitstream_read(&bs, 1, &fdict);
+    bitstream_read(&bs, 2, &flevel);
 
-    uint8_t *deflate_data = (uint8_t *)data + 2;
-    size_t deflate_length = length - 4; // minus 4 bytes Adler32
+    uint32_t adler32 =
+        ((uint32_t)((uint8_t *)data)[length - 4] << 24) |
+        ((uint32_t)((uint8_t *)data)[length - 3] << 16) |
+        ((uint32_t)((uint8_t *)data)[length - 2] << 8)  |
+        ((uint32_t)((uint8_t *)data)[length - 1]);
+
+    int data_length = length - 4; // ADLER32: 4 bytes
+    if (data_length < 0) {
+        printf("Invalid zlib data length\n");
+        return -1;
+    }
+    idat->cmf = cmf;
+    idat->flg = flg;
+    idat->cm = cm;
+    idat->cinfo = cinfo;
+    idat->fcheck = fcheck;
+    idat->fdict = fdict;
+    idat->flevel = flevel;
+    idat->data_length = data_length;
+    idat->data = (uint8_t *)data+2;
+    idat->adler32 = adler32;
+    return 1;
+}
+
+void png_printIDAT_(void *data, uint32_t length) {
+    struct png_IDAT idat;
+    png_readIDAT(data, length, &idat);
+    png_printIDAT(&idat);
 
     struct bitStream ds;
-    bitstream_init(&ds, deflate_data, deflate_length);
+    bitstream_init(&ds, idat.data, idat.data_length);
     uint32_t bfinal, btype;
     bitstream_read(&ds, 1, &bfinal);
     bitstream_read(&ds, 2, &btype);
@@ -146,7 +158,6 @@ void png_printIDAT(void *data, uint32_t length) {
     }
 
     uint32_t calculated = (b << 16) | a;
-    printf("Calculated Adler32: 0x%08X\n", calculated);
     uint32_t expected =
         ((uint32_t)((uint8_t *)data)[length - 4] << 24) |
         ((uint32_t)((uint8_t *)data)[length - 3] << 16) |
@@ -154,6 +165,7 @@ void png_printIDAT(void *data, uint32_t length) {
         ((uint32_t)((uint8_t *)data)[length - 1]);
 
     printf("Expected Adler32:   0x%08X\n", expected);
+    printf("Calculated Adler32: 0x%08X\n", calculated);
 
     int bpp = 3;
     int width = 2;
@@ -171,7 +183,7 @@ void png_printIDAT(void *data, uint32_t length) {
             uint8_t raw = output[row_start + 1 + i];
             uint8_t recon;
 
-            if (filter == 0) {
+            if (filter == 0) { // None
                 recon = raw;
             }
             else if (filter == 1) { // Sub
@@ -214,7 +226,7 @@ void png_printChunk(struct png_chunk *chunk) {
     if (strncmp(chunk->chunkType, "IHDR", 4) == 0 && chunk->length == 13) {
         png_printIHDR((struct png_IHDR *)chunk->chunkData);
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-        png_printIDAT((struct png_IDAT *)chunk->chunkData, chunk->length);
+        png_printIDAT_((struct png_IDAT *)chunk->chunkData, chunk->length);
     } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
         printf("zTXt chunk data: ...");
         // png_interpretzTXt(chunk->chunkData, chunk->length);
