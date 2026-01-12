@@ -1,4 +1,12 @@
+#include <stdio.h>
 #include "./image_common.h"
+
+void print_binary(uint32_t value, int bits) {
+    for (int i = bits - 1; i >= 0; i--) {
+        printf("%c", (value & (1 << i)) ? '1' : '0');
+    }
+    putchar('\n');
+}
 
 void bitstream_init(struct bitStream *bs, uint8_t *data, size_t length) {
     bs->data = data;

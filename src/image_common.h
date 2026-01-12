@@ -27,5 +27,6 @@ void bitstream_init(struct bitStream *bs, uint8_t *data, size_t length);
 int bitstream_read(struct bitStream *bs, int n, uint32_t *out);
 int bitstream_peek(struct bitStream *bs, int n, uint32_t *out);
 void bitstream_align_byte(struct bitStream *bs);
+void print_binary(uint32_t value, int bits);
 
 #endif  // IMAGE_COMMON_H

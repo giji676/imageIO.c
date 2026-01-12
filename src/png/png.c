@@ -17,6 +17,9 @@ uint32_t reverse_bits(uint32_t x, int n) {
 }
 
 void png_printIDAT(void *data, uint32_t length) {
+    FILE *f = fopen("idat.zlib", "wb");
+    fwrite(data, 1, length, f);
+    fclose(f);
     printf("IDAT chunk data (%u bytes):\n", length);
     for (uint32_t i = 0; i < length; ++i) {
         if (i % 16 == 0 && i != 0) {
@@ -58,7 +61,7 @@ void png_printIDAT(void *data, uint32_t length) {
     printf("FLEVEL: %u\n", flevel);
 
     uint8_t *deflate_data = (uint8_t *)data + 2;
-    size_t deflate_length = length - 6; // minus 2 bytes header + 4 bytes Adler32
+    size_t deflate_length = length - 4; // minus 4 bytes Adler32
 
     struct bitStream ds;
     bitstream_init(&ds, deflate_data, deflate_length);
@@ -84,64 +87,111 @@ void png_printIDAT(void *data, uint32_t length) {
     size_t output_pos = 0;
 
     while (1) {
+        uint32_t symbol = 0;
         uint32_t peeked;
+
         bitstream_peek(&ds, 9, &peeked);
 
-        uint32_t symbol = 0;
-        int code_len = 0;
-
-        // Decode fixed Huffman symbol
         uint32_t rev7 = reverse_bits(peeked, 7);
-        if (rev7 <= 23) { // 256..279
+        if (rev7 <= 23) {                 // 256–279
             symbol = 256 + rev7;
-            code_len = 7;
+            bitstream_read(&ds, 7, &peeked);
         } else {
             uint32_t rev8 = reverse_bits(peeked, 8);
-            if (rev8 >= 0x30 && rev8 <= 0xBF) { // 0..143
+            if (rev8 >= 0x30 && rev8 <= 0xBF) {          // 0–143
                 symbol = rev8 - 0x30;
-                code_len = 8;
-            } else if (rev8 >= 0xC0 && rev8 <= 0xC7) { // 280..287
+                bitstream_read(&ds, 8, &peeked);
+            } else if (rev8 >= 0xC0 && rev8 <= 0xC7) {   // 280–287
                 symbol = 280 + (rev8 - 0xC0);
-                code_len = 8;
+                bitstream_read(&ds, 8, &peeked);
             } else {
-                uint32_t rev9 = reverse_bits(peeked, 9); // 144..255
+                uint32_t rev9 = reverse_bits(peeked, 9); // 144–255
                 if (rev9 >= 0x190 && rev9 <= 0x1FF) {
                     symbol = 144 + (rev9 - 0x190);
-                    code_len = 9;
+                    bitstream_read(&ds, 9, &peeked);
                 } else {
                     printf("Invalid Huffman symbol\n");
-                    break;
+                    return;
                 }
             }
         }
 
-        // Consume bits
-        bitstream_read(&ds, code_len, &peeked);
-
-        // End-of-block
+        /* ---- termination ---- */
         if (symbol == 256) {
-            printf("End-of-block reached\n");
+            printf("End of block symbol encountered\n");
             break;
         }
 
-        // Literal bytes
-        if (symbol <= 255) {
+        /* ---- literal ---- */
+        if (symbol < 256) {
+            if (output_pos >= MAX_OUTPUT) {
+                printf("Output buffer overflow\n");
+                return;
+            }
             output[output_pos++] = (uint8_t)symbol;
-            printf("Literal byte: 0x%02X (%u)\n", symbol, symbol);
+            continue;
         }
 
-        if (output_pos >= MAX_OUTPUT) {
-            printf("Output buffer full!\n");
-            break;
+        /* ---- length/distance (not implemented yet) ---- */
+        printf("Length/distance symbol %u encountered (not handled yet)\n", symbol);
+        return;
+    }
+
+    uint32_t a = 1;
+    uint32_t b = 0;
+
+    for (size_t i = 0; i < output_pos; i++) {
+        a = (a + output[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+
+    uint32_t calculated = (b << 16) | a;
+    printf("Calculated Adler32: 0x%08X\n", calculated);
+    uint32_t expected =
+        ((uint32_t)((uint8_t *)data)[length - 4] << 24) |
+        ((uint32_t)((uint8_t *)data)[length - 3] << 16) |
+        ((uint32_t)((uint8_t *)data)[length - 2] << 8)  |
+        ((uint32_t)((uint8_t *)data)[length - 1]);
+
+    printf("Expected Adler32:   0x%08X\n", expected);
+
+    int bpp = 3;
+    int width = 2;
+    int height = 2;
+    int row_bytes = bpp * width + 1;
+
+    uint8_t *final_output = malloc(width * height * bpp);
+    int idx = 0;
+
+    for (int row = 0; row < height; row++) {
+        int row_start = row * row_bytes;
+        uint8_t filter = output[row_start];
+
+        for (int i = 0; i < bpp * width; i++) {
+            uint8_t raw = output[row_start + 1 + i];
+            uint8_t recon;
+
+            if (filter == 0) {
+                recon = raw;
+            }
+            else if (filter == 1) { // Sub
+                uint8_t left = 0;
+                if (i >= bpp) {
+                    left = final_output[idx - bpp];
+                }
+                recon = raw + left;
+            }
+
+            final_output[idx++] = recon;
         }
     }
 
-    // At this point, 'output' contains all literal bytes in order
-    printf("\nDecoded %zu bytes:\n", output_pos);
-    for (size_t i = 0; i < output_pos; i++) {
-        printf("%02X ", output[i]);
+    for (int i = 0; i < width * height * bpp; i++) {
+        printf("%02X ", final_output[i]);
     }
     printf("\n");
+
+    free(final_output);
 }
 
 void png_printIHDR(struct png_IHDR *ihdr) {
