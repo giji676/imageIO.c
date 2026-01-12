@@ -14,7 +14,7 @@ SRC = $(wildcard $(SRC_DIR)/**/*.c $(SRC_DIR)/*.c)
 OBJ = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC))
 
 # Target executable
-TARGET = main
+TARGET = parser
 
 # Ensure build directory structure exists
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c

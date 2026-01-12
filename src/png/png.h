@@ -72,9 +72,8 @@ int png_fixedHuffmanDecode(struct bitStream *ds,
                            uint32_t expected);
 int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol);
 void png_interpretzTXt(void *data, uint32_t length);
-void png_open(char filename[]);
+void png_open(char filename[], int display);
 int png_compareCRC(struct png_chunk *chunk);
 int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos);
-
 
 #endif  // PNG_H

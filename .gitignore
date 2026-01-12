@@ -1,6 +1,6 @@
 *.bmp
 *.png
-!bmpExample.bmp
-!pngExample.png
+!example.bmp
+!example.png
 build/
 main
