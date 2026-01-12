@@ -4,7 +4,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define MAX_OUTPUT 1024
+
+void png_printPixels(void *pixels, struct png_IHDR *ihdr) {
+    for (uint32_t i = 0; i < ihdr->height; i++) {
+        for (uint32_t j = 0; j < ihdr->width; j++) {
+            if (ihdr->bitDepth == 8 && ihdr->colorType == 2) {
+                struct rgbPixel *pixel = &((struct rgbPixel *)pixels)[i * ihdr->width + j];
+                printf("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
+            }
+            printf(" ");
+        }
+        printf("\n");
+    }
+}
+
+int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos) {
+    uint32_t a = 1;
+    uint32_t b = 0;
+
+    for (size_t i = 0; i < output_pos; i++) {
+        a = (a + output[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+
+    uint32_t calculated_adler32 = (b << 16) | a;
+    if (calculated_adler32 != idat->adler32) {
+        return -1;
+    }
+    return 1;
+}
 
 void png_printIDAT(struct png_IDAT *idat) {
     printf("CMF: 0x%02X\n", idat->cmf);
@@ -15,14 +43,14 @@ void png_printIDAT(struct png_IDAT *idat) {
     printf("FDICT: %u\n", idat->fdict);
     printf("FLEVEL: %u\n", idat->flevel);
     printf("DATA_LENGTH: %u\n", idat->data_length);
-    printf("DATA:\n");
-    for (uint32_t i = 0; i < idat->data_length; ++i) {
-        printf("%02x ", idat->data[i]);
-        if (i > 0 && i % 16 == 15) {
-            printf("\n");
-        }
-    }
-    printf("\n");
+    printf("DATA: ...\n");
+    // for (uint32_t i = 0; i < idat->data_length; ++i) {
+    //     printf("%02x ", idat->data[i]);
+    //     if (i > 0 && i % 16 == 15) {
+    //         printf("\n");
+    //     }
+    // }
+    // printf("\n");
     printf("ADLER32: 0x%08X\n", idat->adler32);
 }
 
@@ -52,6 +80,8 @@ int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat) {
         ((uint32_t)((uint8_t *)data)[length - 2] << 8)  |
         ((uint32_t)((uint8_t *)data)[length - 1]);
 
+    // No need to do -2 (for the CM and CINFO bytes)
+    // as we are already skipping them by starting data+2
     int data_length = length - 4; // ADLER32: 4 bytes
     if (data_length < 0) {
         printf("Invalid zlib data length\n");
@@ -70,10 +100,28 @@ int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat) {
     return 1;
 }
 
-void png_printIDAT_(void *data, uint32_t length) {
+uint8_t *png_processIDAT(void *data, uint32_t length,
+                         struct png_IHDR *ihdr,
+                         size_t *out_size) {
+    int width  = ihdr->width;
+    int height = ihdr->height;
+    int bpp;
+    switch (ihdr->colorType) {
+        case 2:
+            if (ihdr->bitDepth != 8) {
+                printf("Unsupported bit depth %u for color type 2\n", ihdr->bitDepth);
+                return NULL;
+            }
+            bpp = 3;
+            break;
+        default:
+            printf("Unsupported color type %u\n", ihdr->colorType);
+            return NULL;
+    }
+
     struct png_IDAT idat;
     png_readIDAT(data, length, &idat);
-    png_printIDAT(&idat);
+    // png_printIDAT(&idat);
 
     struct bitStream ds;
     bitstream_init(&ds, idat.data, idat.data_length);
@@ -81,8 +129,8 @@ void png_printIDAT_(void *data, uint32_t length) {
     bitstream_read(&ds, 1, &bfinal);
     bitstream_read(&ds, 2, &btype);
 
-    printf("BFINAL: %u ", bfinal);
-    printf("BTYPE: %u\n", btype);
+    // printf("BFINAL: %u ", bfinal);
+    // printf("BTYPE: %u\n", btype);
 
     // Lit Value    Bits        Codes
     // ---------    ----        -----
@@ -95,7 +143,12 @@ void png_printIDAT_(void *data, uint32_t length) {
     // 280 - 287     8          11000000 through
     //                          11000111
 
-    uint8_t output[MAX_OUTPUT];
+    size_t expected = height * (width * bpp + 1);
+    uint8_t *output = malloc(expected);
+    if (!output) {
+        printf("Failed to allocate output buffer\n");
+        return NULL;
+    }
     size_t output_pos = 0;
 
     while (1) {
@@ -123,22 +176,24 @@ void png_printIDAT_(void *data, uint32_t length) {
                     bitstream_read(&ds, 9, &peeked);
                 } else {
                     printf("Invalid Huffman symbol\n");
-                    return;
+                    free(output);
+                    return NULL;
                 }
             }
         }
 
         /* ---- termination ---- */
         if (symbol == 256) {
-            printf("End of block symbol encountered\n");
+            // printf("End of block symbol encountered\n");
             break;
         }
 
         /* ---- literal ---- */
         if (symbol < 256) {
-            if (output_pos >= MAX_OUTPUT) {
+            if (output_pos >= expected) {
                 printf("Output buffer overflow\n");
-                return;
+                free(output);
+                return NULL;
             }
             output[output_pos++] = (uint8_t)symbol;
             continue;
@@ -146,30 +201,13 @@ void png_printIDAT_(void *data, uint32_t length) {
 
         /* ---- length/distance (not implemented yet) ---- */
         printf("Length/distance symbol %u encountered (not handled yet)\n", symbol);
-        return;
+        free(output);
+        return NULL;
     }
 
-    uint32_t a = 1;
-    uint32_t b = 0;
-
-    for (size_t i = 0; i < output_pos; i++) {
-        a = (a + output[i]) % 65521;
-        b = (b + a) % 65521;
+    if (!png_compareAdler32(&idat, output, output_pos)) {
+        printf("Adler32 NOT MATCHING\n");
     }
-
-    uint32_t calculated = (b << 16) | a;
-    uint32_t expected =
-        ((uint32_t)((uint8_t *)data)[length - 4] << 24) |
-        ((uint32_t)((uint8_t *)data)[length - 3] << 16) |
-        ((uint32_t)((uint8_t *)data)[length - 2] << 8)  |
-        ((uint32_t)((uint8_t *)data)[length - 1]);
-
-    printf("Expected Adler32:   0x%08X\n", expected);
-    printf("Calculated Adler32: 0x%08X\n", calculated);
-
-    int bpp = 3;
-    int width = 2;
-    int height = 2;
     int row_bytes = bpp * width + 1;
 
     uint8_t *final_output = malloc(width * height * bpp);
@@ -198,12 +236,10 @@ void png_printIDAT_(void *data, uint32_t length) {
         }
     }
 
-    for (int i = 0; i < width * height * bpp; i++) {
-        printf("%02X ", final_output[i]);
-    }
-    printf("\n");
+    free(output);
 
-    free(final_output);
+    *out_size = width * height * bpp;
+    return final_output;
 }
 
 void png_printIHDR(struct png_IHDR *ihdr) {
@@ -218,16 +254,29 @@ void png_printIHDR(struct png_IHDR *ihdr) {
     printf("interlaceMethod: %u", ihdr->interlaceMethod);
 }
 
-void png_printChunk(struct png_chunk *chunk) {
+void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
     printf("\n");
     printf("Chunk\n");
     printf("length: %u\n", chunk->length);
     printf("chunkType: %.4s\n", chunk->chunkType);
-    if (strncmp(chunk->chunkType, "IHDR", 4) == 0 && chunk->length == 13) {
+    if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
+        memcpy(&image->ihdr, chunk->chunkData, sizeof(struct png_IHDR));
+
+        image->ihdr.width  = __builtin_bswap32(image->ihdr.width);
+        image->ihdr.height = __builtin_bswap32(image->ihdr.height);
+
         png_printIHDR((struct png_IHDR *)chunk->chunkData);
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-        png_printIDAT_((struct png_IDAT *)chunk->chunkData, chunk->length);
-    } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
+            image->pixels = png_processIDAT(
+                chunk->chunkData,
+                chunk->length,
+                &image->ihdr,
+                &image->pixel_size
+            );
+            if (image->pixels == NULL) {
+                printf("Failed to process IDAT chunk\n");
+            }
+        } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
         printf("zTXt chunk data: ...");
         // png_interpretzTXt(chunk->chunkData, chunk->length);
     } else {
@@ -240,11 +289,8 @@ void png_printChunk(struct png_chunk *chunk) {
         }
     }
     printf("\n");
-    printf("expected crc: 0x%08X\n", chunk->crc);
-    int crc_compare_res = png_compareCRC(chunk);
-    if (crc_compare_res == 1) {
-        // printf("CRC MATCHING\n");
-    } else {
+    // printf("expected crc: 0x%08X\n", chunk->crc);
+    if (!png_compareCRC(chunk)) {
         printf("CRC NOT MATCHING\n");
     }
 }
@@ -258,16 +304,14 @@ int png_compareCRC(struct png_chunk *chunk) {
     }
     memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
     memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
-    /*
-  printf("raw buff:\n");
-  for (int i = 0; i < crc_inp_len; i++) {
-      printf("0x%02X ", buff[i]);
-  }
-  printf("\n");
-  */
+    // printf("raw buff:\n");
+    // for (int i = 0; i < crc_inp_len; i++) {
+    //     printf("0x%02X ", buff[i]);
+    // }
+    // printf("\n");
 
     unsigned long res = crc(buff, crc_inp_len);
-    printf("calculated crc: 0x%lX\n", res);
+    // printf("calculated crc: 0x%lX\n", res);
     free(buff);
     if (res == chunk->crc) {
         return 1;
@@ -375,7 +419,7 @@ int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
     return 1;
 }
 
-int png_readChunks(FILE *fptr, struct png_chunk **chunks) {
+int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *image) {
     int chunkCount = 0;
 
     while (1) {
@@ -392,7 +436,7 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks) {
             printf("Error reading chunk or end of file\n");
             break;
         }
-        png_printChunk(&(*chunks)[chunkCount]);
+        png_printChunk(&(*chunks)[chunkCount], image);
 
         if (strncmp((*chunks)[chunkCount].chunkType, "IEND", 4) == 0) {
             printf("\nEnd of file reached\n");
@@ -427,13 +471,17 @@ void png_open(char filename[]) {
         return;
     }
 
-    int chunkCount = png_readChunks(fptr, &chunks);
+    struct png_image image = {0};
+    int chunkCount = png_readChunks(fptr, &chunks, &image);
     if (chunkCount < 0) {
         printf("Error reading chunks\n");
         fclose(fptr);
         return;
     }
     fclose(fptr);
+
+    png_printPixels(image.pixels, &image.ihdr);
+    free(image.pixels);
 
     for (int i = 0; i < chunkCount; ++i) {
         free(chunks[i].chunkData);
