@@ -412,11 +412,12 @@ int png_readChunk(FILE *fptr, struct png_chunk *chunk) {
         return -1;
     }
     if (chunk->length == 0) {
+        free(chunk->chunkData);
         chunk->chunkData = NULL;
-        // MEM LEAK HERE?
     } else if (fread(chunk->chunkData, chunk->length, 1, fptr) != 1) {
         printf("Failed to read chunk data\n");
         free(chunk->chunkData);
+        chunk->chunkData = NULL;
         return -1;
     }
 
@@ -503,7 +504,7 @@ void png_open(char filename[]) {
     fclose(fptr);
 
     png_printPixels(image.pixels, &image.ihdr);
-    show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
+    // show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
     free(image.pixels);
 
     for (int i = 0; i < chunkCount; ++i) {

@@ -2,7 +2,7 @@
 
 // Example function to show raw RGB pixels
 void show_raw_pixels(uint8_t *pixels, int width, int height) {
-    int scale = 500;
+    int scale = 1000/height;
     uint8_t *scaled_data = malloc(width * scale * height * scale * 4);
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -53,21 +53,6 @@ void show_raw_pixels(uint8_t *pixels, int width, int height) {
         fprintf(stderr, "Warning: unexpected screen depth %d\n", depth);
     }
 
-    int bytes_per_pixel = 4; // assuming 32-bit visual
-    uint8_t *image_data = malloc(width * height * bytes_per_pixel);
-    if (!image_data) {
-        fprintf(stderr, "Failed to allocate image buffer\n");
-        XDestroyWindow(dpy, win);
-        XCloseDisplay(dpy);
-        return;
-    }
-
-    for (int i = 0; i < width * height; i++) {
-        image_data[i * 4 + 0] = pixels[i * 3 + 2]; // Blue
-        image_data[i * 4 + 1] = pixels[i * 3 + 1]; // Green
-        image_data[i * 4 + 2] = pixels[i * 3 + 0]; // Red
-        image_data[i * 4 + 3] = 0;                 // Alpha (unused)
-    }
 
     XImage *img = XCreateImage(dpy, DefaultVisual(dpy, screen),
                                depth, ZPixmap, 0,
@@ -81,7 +66,7 @@ void show_raw_pixels(uint8_t *pixels, int width, int height) {
     printf("Press any key in the window to exit...\n");
     XNextEvent(dpy, &e); // wait for key press
 
-    XDestroyImage(img);   // frees image_data too
+    XDestroyImage(img);
     XDestroyWindow(dpy, win);
     XCloseDisplay(dpy);
 }
