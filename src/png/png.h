@@ -33,6 +33,7 @@ struct png_zTXt {
 };
 
 void png_printIHDR(struct png_IHDR *ihdr);
+void png_printIDAT(void *data, uint32_t length);
 void png_printzTXt(void *data);
 void png_printFileSignature(struct png_fileSignature *fileSignature);
 void png_printChunk(struct png_chunk *chunk);
