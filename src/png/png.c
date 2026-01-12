@@ -100,6 +100,75 @@ int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat) {
     return 1;
 }
 
+int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol) {
+    uint32_t peeked;
+
+    // Peek up to 9 bits (max code length in fixed Huffman)
+    if (bitstream_peek(ds, 9, &peeked) != 0) {
+        return -1; // Error reading bits
+    }
+
+    uint32_t rev7 = reverse_bits(peeked, 7);
+    if (rev7 <= 23) {                 // symbols 256–279 (7-bit codes)
+        *symbol = 256 + rev7;
+        bitstream_read(ds, 7, &peeked);
+        return 0;
+    }
+
+    uint32_t rev8 = reverse_bits(peeked, 8);
+    if (rev8 >= 0x30 && rev8 <= 0xBF) {      // symbols 0–143 (8-bit codes)
+        *symbol = rev8 - 0x30;
+        bitstream_read(ds, 8, &peeked);
+        return 0;
+    } else if (rev8 >= 0xC0 && rev8 <= 0xC7) { // symbols 280–287 (8-bit codes)
+        *symbol = 280 + (rev8 - 0xC0);
+        bitstream_read(ds, 8, &peeked);
+        return 0;
+    }
+
+    uint32_t rev9 = reverse_bits(peeked, 9);
+    if (rev9 >= 0x190 && rev9 <= 0x1FF) { // symbols 144–255 (9-bit codes)
+        *symbol = 144 + (rev9 - 0x190);
+        bitstream_read(ds, 9, &peeked);
+        return 0;
+    }
+
+    return -1;
+}
+int png_fixedHuffmanDecode(struct bitStream *ds,
+                           uint8_t *output,
+                           size_t *output_pos,
+                           uint32_t expected) {
+    while (1) {
+        uint32_t symbol;
+        if (png_decodeFixedHuffmanSymbol(ds, &symbol) != 0) {
+            printf("Invalid Huffman symbol\n");
+            return -1;
+        }
+
+        /* ---- termination ---- */
+        if (symbol == 256) {
+            // printf("End of block symbol encountered\n");
+            return 0;
+        }
+
+        /* ---- literal ---- */
+        if (symbol < 256) {
+            if (*output_pos >= expected) {
+                printf("Output buffer overflow\n");
+                return -1;
+            }
+            output[*output_pos] = (uint8_t)symbol;
+            (*output_pos)++;
+            continue;
+        }
+
+        /* ---- length/distance (not implemented yet) ---- */
+        printf("Length/distance symbol %u encountered (not handled yet)\n", symbol);
+        return -1;
+    }
+}
+
 uint8_t *png_processIDAT(void *data, uint32_t length,
                          struct png_IHDR *ihdr,
                          size_t *out_size) {
@@ -151,56 +220,8 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     }
     size_t output_pos = 0;
 
-    while (1) {
-        uint32_t symbol = 0;
-        uint32_t peeked;
-
-        bitstream_peek(&ds, 9, &peeked);
-
-        uint32_t rev7 = reverse_bits(peeked, 7);
-        if (rev7 <= 23) {                 // 256–279
-            symbol = 256 + rev7;
-            bitstream_read(&ds, 7, &peeked);
-        } else {
-            uint32_t rev8 = reverse_bits(peeked, 8);
-            if (rev8 >= 0x30 && rev8 <= 0xBF) {          // 0–143
-                symbol = rev8 - 0x30;
-                bitstream_read(&ds, 8, &peeked);
-            } else if (rev8 >= 0xC0 && rev8 <= 0xC7) {   // 280–287
-                symbol = 280 + (rev8 - 0xC0);
-                bitstream_read(&ds, 8, &peeked);
-            } else {
-                uint32_t rev9 = reverse_bits(peeked, 9); // 144–255
-                if (rev9 >= 0x190 && rev9 <= 0x1FF) {
-                    symbol = 144 + (rev9 - 0x190);
-                    bitstream_read(&ds, 9, &peeked);
-                } else {
-                    printf("Invalid Huffman symbol\n");
-                    free(output);
-                    return NULL;
-                }
-            }
-        }
-
-        /* ---- termination ---- */
-        if (symbol == 256) {
-            // printf("End of block symbol encountered\n");
-            break;
-        }
-
-        /* ---- literal ---- */
-        if (symbol < 256) {
-            if (output_pos >= expected) {
-                printf("Output buffer overflow\n");
-                free(output);
-                return NULL;
-            }
-            output[output_pos++] = (uint8_t)symbol;
-            continue;
-        }
-
-        /* ---- length/distance (not implemented yet) ---- */
-        printf("Length/distance symbol %u encountered (not handled yet)\n", symbol);
+    if (png_fixedHuffmanDecode(&ds, output, &output_pos, expected) == -1) {
+        printf("Decompression failed\n");
         free(output);
         return NULL;
     }
@@ -267,16 +288,16 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
 
         png_printIHDR((struct png_IHDR *)chunk->chunkData);
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-            image->pixels = png_processIDAT(
-                chunk->chunkData,
-                chunk->length,
-                &image->ihdr,
-                &image->pixel_size
-            );
-            if (image->pixels == NULL) {
-                printf("Failed to process IDAT chunk\n");
-            }
-        } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
+        image->pixels = png_processIDAT(
+            chunk->chunkData,
+            chunk->length,
+            &image->ihdr,
+            &image->pixel_size
+        );
+        if (image->pixels == NULL) {
+            printf("Failed to process IDAT chunk\n");
+        }
+    } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
         printf("zTXt chunk data: ...");
         // png_interpretzTXt(chunk->chunkData, chunk->length);
     } else {

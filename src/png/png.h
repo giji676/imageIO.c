@@ -66,6 +66,11 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image);
 void png_printIDAT(struct png_IDAT *idat);
 void png_printPixels(void *pixels, struct png_IHDR *ihdr);
 
+int png_fixedHuffmanDecode(struct bitStream *ds,
+                           uint8_t *output,
+                           size_t *output_pos,
+                           uint32_t expected);
+int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol);
 void png_interpretzTXt(void *data, uint32_t length);
 void png_open(char filename[]);
 int png_compareCRC(struct png_chunk *chunk);
