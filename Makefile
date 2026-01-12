@@ -1,6 +1,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -I./src/bmp -I./src/png
+LDFLAGS = -lX11   # libraries go after object files
 
 # Directories
 SRC_DIR = src
@@ -17,12 +18,12 @@ TARGET = main
 
 # Ensure build directory structure exists
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(dir $@)  # Ensure directory structure exists
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Link all object files into the final executable
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $^ -o $@ $(LDFLAGS)
 
 # Clean build directory and executable
 .PHONY: clean

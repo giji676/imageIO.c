@@ -1,5 +1,6 @@
 #include "./png.h"
 #include "../crc/crc.h"
+#include "../display/display.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -502,6 +503,7 @@ void png_open(char filename[]) {
     fclose(fptr);
 
     png_printPixels(image.pixels, &image.ihdr);
+    show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
     free(image.pixels);
 
     for (int i = 0; i < chunkCount; ++i) {
