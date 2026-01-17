@@ -2,7 +2,6 @@
 #include "../crc/crc.h"
 #include "../display/display.h"
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -136,6 +135,7 @@ int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol) {
 
     return -1;
 }
+
 int png_fixedHuffmanDecode(struct bitStream *ds,
                            uint8_t *output,
                            size_t *output_pos,
@@ -235,6 +235,13 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     uint8_t *final_output = malloc(width * height * bpp);
     int idx = 0;
 
+    // for (int i = 0; i < row_bytes * height; i++) {
+    //     printf("%02X ", output[i]);
+    //     if (i > 0 && i % 16 == 15) {
+    //         printf("\n");
+    //     }
+    // }
+
     for (int row = 0; row < height; row++) {
         int row_start = row * row_bytes;
         uint8_t filter = output[row_start];
@@ -277,17 +284,17 @@ void png_printIHDR(struct png_IHDR *ihdr) {
 }
 
 void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
-    printf("\n");
-    printf("Chunk\n");
-    printf("length: %u\n", chunk->length);
-    printf("chunkType: %.4s\n", chunk->chunkType);
+    // printf("\n");
+    // printf("Chunk\n");
+    // printf("length: %u\n", chunk->length);
+    // printf("chunkType: %.4s\n", chunk->chunkType);
     if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
         memcpy(&image->ihdr, chunk->chunkData, sizeof(struct png_IHDR));
 
         image->ihdr.width  = __builtin_bswap32(image->ihdr.width);
         image->ihdr.height = __builtin_bswap32(image->ihdr.height);
 
-        png_printIHDR((struct png_IHDR *)chunk->chunkData);
+        // png_printIHDR((struct png_IHDR *)chunk->chunkData);
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
         image->pixels = png_processIDAT(
             chunk->chunkData,
@@ -302,15 +309,15 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
         printf("zTXt chunk data: ...");
         // png_interpretzTXt(chunk->chunkData, chunk->length);
     } else {
-        printf("chunkData:");
+        // printf("chunkData:");
         for (uint32_t i = 0; i < chunk->length; ++i) {
             if (i % 16 == 0) {
                 printf("\n");
             }
-            printf("%02x ", ((unsigned char *)chunk->chunkData)[i]);
+            // printf("%02x ", ((unsigned char *)chunk->chunkData)[i]);
         }
     }
-    printf("\n");
+    // printf("\n");
     // printf("expected crc: 0x%08X\n", chunk->crc);
     if (!png_compareCRC(chunk)) {
         printf("CRC NOT MATCHING\n");
@@ -462,7 +469,7 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *imag
         png_printChunk(&(*chunks)[chunkCount], image);
 
         if (strncmp((*chunks)[chunkCount].chunkType, "IEND", 4) == 0) {
-            printf("\nEnd of file reached\n");
+            // printf("\nEnd of file reached\n");
             chunkCount++;
             break;
         }
@@ -470,6 +477,48 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *imag
     }
 
     return chunkCount;
+}
+
+void write_ihdr(FILE *fptr, struct png_IHDR *ihdr) {
+    uint32_t width = __builtin_bswap32(ihdr->width);
+    uint32_t height = __builtin_bswap32(ihdr->height);
+    fwrite(&width, sizeof(ihdr->width), 1, fptr);
+    fwrite(&height, sizeof(ihdr->height), 1, fptr);
+    fwrite(&ihdr->bitDepth, sizeof(ihdr->bitDepth), 1, fptr);
+    fwrite(&ihdr->colorType, sizeof(ihdr->colorType), 1, fptr);
+    fwrite(&ihdr->compressionMethod, sizeof(ihdr->compressionMethod), 1, fptr);
+    fwrite(&ihdr->filterMethod, sizeof(ihdr->filterMethod), 1, fptr);
+    fwrite(&ihdr->interlaceMethod, sizeof(ihdr->interlaceMethod), 1, fptr);
+}
+
+void write_chunk(FILE *fptr, struct png_chunk *chunk) {
+    uint32_t chunkLength = __builtin_bswap32(chunk->length);
+    fwrite(&chunkLength, sizeof(chunk->length), 1, fptr);
+    fwrite(&chunk->chunkType, sizeof(chunk->chunkType), 1, fptr);
+    fflush(stdin);
+    if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
+        write_ihdr(fptr, (struct png_IHDR *)chunk->chunkData);
+    } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
+        // write_idat(fptr, (struct png_IDAT *)chunk->chunkData);
+    } else {
+        fwrite(chunk->chunkData, chunk->length, 1, fptr);
+    }
+    fwrite(&chunk->crc, sizeof(chunk->crc), 1, fptr);
+}
+
+int png_calculateCRC(struct png_chunk *chunk) {
+    int crc_inp_len = sizeof(chunk->chunkType) + (int)chunk->length;
+    unsigned char *buff = malloc(crc_inp_len);
+    if (buff == NULL) {
+        printf("Failed to allocate memory for chunk crc buffer\n");
+        return -1;
+    }
+    memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
+    memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
+    uint32_t res = (uint32_t)crc(buff, crc_inp_len);
+    free(buff);
+    chunk->crc = __builtin_bswap32(res);
+    return 0;
 }
 
 void png_open(char filename[], int display) {
@@ -486,7 +535,7 @@ void png_open(char filename[], int display) {
     if (png_readFileSignature(fptr, &png_fileSignature) != 1) {
         return;
     }
-    png_printFileSignature(&png_fileSignature);
+    // png_printFileSignature(&png_fileSignature);
 
     struct png_chunk *chunks = malloc(sizeof(struct png_chunk));
     if (chunks == NULL) {
@@ -507,10 +556,8 @@ void png_open(char filename[], int display) {
     if (display) {
         show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
     }
-    free(image.pixels);
 
     for (int i = 0; i < chunkCount; ++i) {
         free(chunks[i].chunkData);
     }
-    free(chunks);
 }

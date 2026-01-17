@@ -1,7 +1,12 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -I./src/bmp -I./src/png
-LDFLAGS = -lX11   # libraries go after object files
+LDFLAGS = -lX11
+
+# Enable debug flags when DEBUG=1
+ifeq ($(DEBUG),1)
+    CFLAGS += -g -O0
+endif
 
 # Directories
 SRC_DIR = src

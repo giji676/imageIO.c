@@ -2,6 +2,7 @@
 #include <string.h>
 #include "bmp/bmp.h"
 #include "png/png.h"
+#include "png/png_write.h"
 
 void print_usage() {
     printf("Usage: ./parser [OPTIONS] INPUT_FILE\n\n");
@@ -39,6 +40,7 @@ int main(int argc, char **argv) {
 
     int display = 0;
     char *input_file = NULL;
+    int save = 0;
 
     // Iterate over arguments
     for (int i = 1; i < argc; i++) {
@@ -50,6 +52,10 @@ int main(int argc, char **argv) {
             strcmp(argv[i], "--display") == 0) 
         {
             display = 1;
+        } else if (strcmp(argv[i], "-s") == 0 ||
+            strcmp(argv[i], "--save") == 0)
+        {
+            save = 1;
         } else if (argv[i][0] != '-') {
             // first non-flag argument is INPUT_FILE
             if (!input_file) {
@@ -67,12 +73,16 @@ int main(int argc, char **argv) {
     }
 
     if (!input_file) {
+        // input_file = "assets/example.png";
         fprintf(stderr, "Error: INPUT_FILE is required\n");
         print_usage();
         return 1;
     }
 
     processFile(input_file, display);
+    if (save) {
+        png_save("output.png");
+    }
 
     return 0;
 }

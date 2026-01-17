@@ -48,7 +48,7 @@ struct png_zTXt {
 struct png_image {
     struct png_IHDR ihdr;
     uint8_t *pixels;
-    size_t pixel_size;
+    size_t pixel_size; // total size of pixel data in bytes
 };
 
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
@@ -74,6 +74,7 @@ int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol);
 void png_interpretzTXt(void *data, uint32_t length);
 void png_open(char filename[], int display);
 int png_compareCRC(struct png_chunk *chunk);
+int png_calculateCRC(struct png_chunk *chunk);
 int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos);
 
 #endif  // PNG_H
