@@ -42,12 +42,36 @@ void fixed_huffman(struct bitStream *bs, uint8_t *data, int size) {
     bitstream_flush(bs);
 }
 
-uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr) {
-    int chunkDataSize = 2 + 22 + 4; // cmf,flg,data,adler
-    uint8_t *chunkData = malloc(chunkDataSize);
-    struct bitStream bs;
-    bitstream_init(&bs, chunkData, chunkDataSize);
+uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, int *out_len) {
+    int bpp = 3;
+    int row_bytes = image->ihdr.width * bpp;
 
+    // Prepare uncompressed data with filters
+    idat->data_length = (row_bytes + 1) * image->ihdr.height;
+    idat->data = malloc(idat->data_length);
+
+    for (uint32_t i = 0; i < image->ihdr.height; i++) {
+        int row_start = i * (row_bytes + 1);
+        if (i == 0) {
+            idat->data[row_start] = 0; // None
+            for (int x = 0; x < row_bytes; x++)
+                idat->data[row_start + 1 + x] = image->pixels[x];
+        } else {
+            idat->data[row_start] = 1; // Sub
+            for (int x = 0; x < row_bytes; x++) {
+                uint8_t raw = image->pixels[i * row_bytes + x];
+                uint8_t left = (x >= bpp) ? image->pixels[i * row_bytes + x - bpp] : 0;
+                idat->data[row_start + 1 + x] = raw - left;
+            }
+        }
+    }
+
+    // Allocate output buffer: safe overestimate
+    int max_out = idat->data_length + 6 + 5; // zlib header + worst-case compressed + adler
+    uint8_t *out_buf = malloc(max_out);
+    struct bitStream bs = { .data = out_buf, .bitpos = 0, .length = max_out };
+
+    // Zlib header
     idat->cm = 8;
     idat->cinfo = 0;
     idat->cmf = (idat->cinfo << 4) | idat->cm;
@@ -55,60 +79,31 @@ uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr)
     idat->fdict = 0;
     idat->fcheck = 31 - ((idat->cmf << 8 | (idat->flevel << 1) | idat->fdict)) % 31;
     idat->flg = (idat->flevel << 1 | idat->fdict) << 5 | idat->fcheck;
+
     bitstream_write(&bs, 4, idat->cm);
     bitstream_write(&bs, 4, idat->cinfo);
     bitstream_write(&bs, 5, idat->fcheck);
     bitstream_write(&bs, 1, idat->fdict);
     bitstream_write(&bs, 2, idat->flevel);
-    bitstream_write(&bs, 1, 1); // BFINAL 0b1
-    bitstream_write(&bs, 2, 1); // BTYPE  0b01
+    bitstream_write(&bs, 1, 1); // BFINAL
+    bitstream_write(&bs, 2, 1); // BTYPE fixed Huffman
 
-    int bpp = 3; // assuming RGB 8-bit
-    int row_bytes = image->ihdr.width * bpp;
-    idat->data_length = (row_bytes + 1) * image->ihdr.height;
-    idat->data = malloc(idat->data_length);
+    fixed_huffman(&bs, idat->data, idat->data_length);
 
-    for (uint32_t i = 0; i < image->ihdr.height; i++) {
-        int row_start = i * (row_bytes + 1); // +1 for filter byte
-
-        if (i == 0) {
-            // Row 0: None
-            idat->data[row_start] = 0;
-            for (int x = 0; x < row_bytes; x++) {
-                idat->data[row_start + 1 + x] = image->pixels[x];
-            }
-        } else if (i >= 1) {
-            // Row 1: Sub
-            idat->data[row_start] = 1; // Sub filter
-            for (int x = 0; x < row_bytes; x++) {
-                uint8_t recon;
-                if (x >= bpp) {
-                    uint8_t raw = image->pixels[i * row_bytes + x];
-                    uint8_t left = image->pixels[i * row_bytes + x - bpp];
-                    recon = raw - left;
-                } else {
-                    recon = image->pixels[i * row_bytes + x];
-                }
-                idat->data[row_start + 1 + x] = recon;
-            }
-        }
-    }
-    int outSize = (image->ihdr.width * bpp + 1) * image->ihdr.height;
-
-    uint32_t a = 1;
-    uint32_t b = 0;
-
-    for (size_t i = 0; i < outSize; i++) {
+    // Adler32
+    uint32_t a = 1, b = 0;
+    for (size_t i = 0; i < idat->data_length; i++) {
         a = (a + idat->data[i]) % 65521;
         b = (b + a) % 65521;
     }
+    uint32_t adler32 = __builtin_bswap32((b << 16) | a);
+    bitstream_write(&bs, 32, adler32);
 
-    uint32_t calculated_adler32 = (b << 16) | a;
-    uint32_t swapped_adler32 = __builtin_bswap32(calculated_adler32);
+    // Exact length of compressed chunk
+    int final_len = (bs.bitpos + 7) / 8;
+    *out_len = final_len;
 
-    fixed_huffman(&bs, idat->data, outSize);
-    bitstream_write(&bs, 32, swapped_adler32);
-    return chunkData;
+    return out_buf;
 }
 
 uint8_t *serialize_ihdr(const struct png_IHDR *ihdr) {
@@ -201,14 +196,17 @@ int png_save(char filename[]) {
     image.pixel_size = ihdr.width * ihdr.height * 3;
 
     struct png_IDAT idat;
-    struct png_chunk idat_chunk = {
-        .length = 22, // TEMP
-        .chunkType = {'I','D','A','T'},
-        .chunkData = &idat,
-    };
 
-    idat_chunk.chunkData = png_deflate(&image, &idat, fptr);
+    int idat_len;
+    uint8_t *compressed = png_deflate(&image, &idat, &idat_len);
+
+    struct png_chunk idat_chunk = {
+        .length = idat_len,
+        .chunkType = {'I','D','A','T'},
+        .chunkData = compressed,
+    };
     idat_chunk.crc = png_calculateCRC(&idat_chunk);
+
 
     struct png_chunk iend_chunk = {
         .length = 0,
@@ -220,7 +218,7 @@ int png_save(char filename[]) {
     write_chunk(fptr, &ihdr_chunk);
     write_chunk(fptr, &idat_chunk);
     write_chunk(fptr, &iend_chunk);
-    free(idat.data);
+    free(compressed);
 
     fclose(fptr);
     return 1;
