@@ -205,8 +205,6 @@ int png_save(char filename[]) {
         .chunkType = {'I','D','A','T'},
         .chunkData = compressed,
     };
-    idat_chunk.crc = png_calculateCRC(&idat_chunk);
-
 
     struct png_chunk iend_chunk = {
         .length = 0,

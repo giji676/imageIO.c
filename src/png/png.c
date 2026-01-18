@@ -306,7 +306,7 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
             printf("Failed to process IDAT chunk\n");
         }
     } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
-        printf("zTXt chunk data: ...");
+        // printf("zTXt chunk data: ...");
         // png_interpretzTXt(chunk->chunkData, chunk->length);
     } else {
         // printf("chunkData:");
@@ -479,48 +479,6 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *imag
     return chunkCount;
 }
 
-// void write_ihdr(FILE *fptr, struct png_IHDR *ihdr) {
-//     uint32_t width = __builtin_bswap32(ihdr->width);
-//     uint32_t height = __builtin_bswap32(ihdr->height);
-//     fwrite(&width, sizeof(ihdr->width), 1, fptr);
-//     fwrite(&height, sizeof(ihdr->height), 1, fptr);
-//     fwrite(&ihdr->bitDepth, sizeof(ihdr->bitDepth), 1, fptr);
-//     fwrite(&ihdr->colorType, sizeof(ihdr->colorType), 1, fptr);
-//     fwrite(&ihdr->compressionMethod, sizeof(ihdr->compressionMethod), 1, fptr);
-//     fwrite(&ihdr->filterMethod, sizeof(ihdr->filterMethod), 1, fptr);
-//     fwrite(&ihdr->interlaceMethod, sizeof(ihdr->interlaceMethod), 1, fptr);
-// }
-//
-// void write_chunk(FILE *fptr, struct png_chunk *chunk) {
-//     uint32_t chunkLength = __builtin_bswap32(chunk->length);
-//     fwrite(&chunkLength, sizeof(chunk->length), 1, fptr);
-//     fwrite(&chunk->chunkType, sizeof(chunk->chunkType), 1, fptr);
-//     fflush(stdin);
-//     if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
-//         write_ihdr(fptr, (struct png_IHDR *)chunk->chunkData);
-//     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-//         // write_idat(fptr, (struct png_IDAT *)chunk->chunkData);
-//     } else {
-//         fwrite(chunk->chunkData, chunk->length, 1, fptr);
-//     }
-//     fwrite(&chunk->crc, sizeof(chunk->crc), 1, fptr);
-// }
-//
-int png_calculateCRC(struct png_chunk *chunk) {
-    int crc_inp_len = sizeof(chunk->chunkType) + (int)chunk->length;
-    unsigned char *buff = malloc(crc_inp_len);
-    if (buff == NULL) {
-        printf("Failed to allocate memory for chunk crc buffer\n");
-        return -1;
-    }
-    memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
-    memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
-    uint32_t res = (uint32_t)crc(buff, crc_inp_len);
-    free(buff);
-    chunk->crc = __builtin_bswap32(res);
-    return 0;
-}
-
 void png_open(char filename[], int display) {
     FILE *fptr;
 
@@ -556,8 +514,10 @@ void png_open(char filename[], int display) {
     if (display) {
         show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
     }
+    free(image.pixels);
 
     for (int i = 0; i < chunkCount; ++i) {
         free(chunks[i].chunkData);
     }
+    free(chunks);
 }
