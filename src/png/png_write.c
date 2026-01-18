@@ -42,14 +42,7 @@ void fixed_huffman(struct bitStream *bs, uint8_t *data, int size) {
     bitstream_flush(bs);
 }
 
-void png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr) {
-    // 00 0000 16  49 4441 54   08  99 
-    // |  size  |  |I  D A T| |CMF|FLG|
-    // 63 f8cf c0c0 f09f 8191 81e1 ffff ff0c 001e f604 fd 
-    // |                        DATA                    |
-    // 6f e848 5e
-    // |   CRC  |
-
+uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr) {
     int chunkDataSize = 2 + 22 + 4; // cmf,flg,data,adler
     uint8_t *chunkData = malloc(chunkDataSize);
     struct bitStream bs;
@@ -101,16 +94,6 @@ void png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr) {
         }
     }
     int outSize = (image->ihdr.width * bpp + 1) * image->ihdr.height;
-    printf("Expected:\n");
-    printf("00 FF 00 00 00 FF 00 01 00 00 FF FF FF 00\n");
-    printf("Result:\n");
-    for (int i = 0; i < outSize; i++) {
-        printf("%02X ", idat->data[i]);
-        if (i > 0 && i % 16 == 15) {
-            printf("\n");
-        }
-    }
-    printf("\n");
 
     uint32_t a = 1;
     uint32_t b = 0;
@@ -124,8 +107,52 @@ void png_deflate(struct png_image *image, struct png_IDAT *idat, FILE *fptr) {
     uint32_t swapped_adler32 = __builtin_bswap32(calculated_adler32);
 
     fixed_huffman(&bs, idat->data, outSize);
-    fwrite(bs.data, bitstream_get_size(&bs), 1, fptr);
-    fwrite(&swapped_adler32, 4, 1, fptr);
+    bitstream_write(&bs, 32, swapped_adler32);
+    return chunkData;
+}
+
+uint8_t *serialize_ihdr(const struct png_IHDR *ihdr) {
+    uint8_t *buf = malloc(sizeof(struct png_IHDR));
+    if (!buf) return NULL;
+
+    uint32_t w = __builtin_bswap32(ihdr->width);
+    uint32_t h = __builtin_bswap32(ihdr->height);
+
+    size_t off = 0;
+
+    memcpy(buf + off, &w, sizeof(w)); off += sizeof(w);
+    memcpy(buf + off, &h, sizeof(h)); off += sizeof(h);
+
+    buf[off++] = ihdr->bitDepth;
+    buf[off++] = ihdr->colorType;
+    buf[off++] = ihdr->compressionMethod;
+    buf[off++] = ihdr->filterMethod;
+    buf[off++] = ihdr->interlaceMethod;
+
+    return buf;
+}
+
+void write_chunk(FILE *fptr, struct png_chunk *chunk) {
+    uint32_t chunkLength = __builtin_bswap32(chunk->length);
+    uint32_t totalChunkSize = sizeof(chunk->length) + sizeof(chunk->chunkType) + chunk->length + sizeof(chunk->crc);
+    uint8_t *buff = malloc(totalChunkSize);
+
+    size_t off = 0;
+    memcpy(buff + off, &chunkLength, sizeof(chunk->length)); off += sizeof(chunk->length);
+    memcpy(buff + off, chunk->chunkType, sizeof(chunk->chunkType)); off += sizeof(chunk->chunkType);
+
+    if (memcmp(chunk->chunkType, "IHDR", 4) == 0) {
+        uint8_t *serializedData = serialize_ihdr((struct png_IHDR *)chunk->chunkData);
+        memcpy(buff + off, serializedData, chunk->length); off += chunk->length;
+        free(serializedData);
+    } else {
+        memcpy(buff + off, chunk->chunkData, chunk->length); off += chunk->length;
+    }
+    uint32_t crc_val = __builtin_bswap32(crc(buff + sizeof(chunk->length), sizeof(chunk->chunkType) + chunk->length));
+    memcpy(buff + off, &crc_val, sizeof(chunk->crc));
+
+    fwrite(buff, totalChunkSize, 1, fptr);
+    free(buff);
 }
 
 int png_save(char filename[]) {
@@ -138,7 +165,6 @@ int png_save(char filename[]) {
     struct png_fileSignature png_fileSignature = {
         .signature = {'\211','P','N','G','\r','\n','\032','\n'}
     };
-    // fwrite(&png_fileSignature, sizeof(png_fileSignature), 1, fptr);
 
     struct png_IHDR ihdr = {
         .width = 2,
@@ -155,11 +181,6 @@ int png_save(char filename[]) {
         .chunkType = {'I','H','D','R'},
         .chunkData = &ihdr,
     };
-    ihdr.width = __builtin_bswap32(ihdr.width);
-    ihdr.height = __builtin_bswap32(ihdr.height);
-    png_calculateCRC(&ihdr_chunk);
-    ihdr.width = __builtin_bswap32(ihdr.width);
-    ihdr.height = __builtin_bswap32(ihdr.height);
 
     struct png_image image;
     image.ihdr = ihdr;
@@ -186,11 +207,21 @@ int png_save(char filename[]) {
         .chunkData = &idat,
     };
 
-    png_deflate(&image, &idat, fptr);
-    // write_chunk(fptr, &idat_chunk);
+    idat_chunk.chunkData = png_deflate(&image, &idat, fptr);
+    idat_chunk.crc = png_calculateCRC(&idat_chunk);
+
+    struct png_chunk iend_chunk = {
+        .length = 0,
+        .chunkType = {'I','E','N','D'},
+        .chunkData = NULL,
+    };
+
+    fwrite(&png_fileSignature, sizeof(png_fileSignature), 1, fptr);
+    write_chunk(fptr, &ihdr_chunk);
+    write_chunk(fptr, &idat_chunk);
+    write_chunk(fptr, &iend_chunk);
     free(idat.data);
 
     fclose(fptr);
     return 1;
 }
-
