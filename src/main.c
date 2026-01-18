@@ -1,10 +1,14 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include "bmp/bmp.h"
 #include "png/png.h"
 #include "png/png_write.h"
-#include "./display/display.h"
+#include "display/display.h"
+#include "log.h"
+
+int g_log_level = LOG_WARN;
 
 void printUsage() {
     printf("Usage: ./parser [OPTIONS] INPUT_FILE\n\n");
@@ -12,6 +16,8 @@ void printUsage() {
     printf("  INPUT_FILE\tPath to the input file to parse (required)\n\n");
     printf("Options:\n");
     printf("  -d, --disp, --display\tDisplay the parsed image\n");
+    printf("  -s, --save\tSave the raw pixels back to a png file\n");
+    printf("  --log=0|1|2\tSpecify log level (0=ERROR, 1=WARNING, 2=INFO)\n");
     printf("  -h, --help\tShow this help message and exit\n\n");
     printf("Examples:\n");
     printf("  ./parser image.png\n");
@@ -41,8 +47,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    int display = 0;
     char *input_file = NULL;
+    int display = 0;
     int save = 0;
 
     // Iterate over arguments
@@ -55,6 +61,13 @@ int main(int argc, char **argv) {
             strcmp(argv[i], "--display") == 0) 
         {
             display = 1;
+        } else if (strncmp(argv[i], "--log=", 6) == 0)
+        {
+            g_log_level = atoi(argv[i] + 6);
+            if (g_log_level < 0 || g_log_level > 2) {
+                fprintf(stderr, "Invalid log level: %d\n", g_log_level);
+                return 1;
+            }
         } else if (strcmp(argv[i], "-s") == 0 ||
             strcmp(argv[i], "--save") == 0)
         {
@@ -76,7 +89,6 @@ int main(int argc, char **argv) {
     }
 
     if (!input_file) {
-        // input_file = "assets/example.png";
         fprintf(stderr, "Error: INPUT_FILE is required\n");
         printUsage();
         return 1;

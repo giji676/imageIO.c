@@ -1,7 +1,8 @@
-#include "./png_write.h"
-#include "./png.h"
+#include "png_write.h"
+#include "png.h"
 #include "../crc/crc.h"
 #include "../display/display.h"
+#include "../log.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,7 +155,7 @@ void write_chunk(FILE *fptr, struct png_chunk *chunk) {
 int png_save(char filename[], uint8_t *data, uint32_t width, uint32_t height, uint8_t bpp) {
     FILE *fptr;
     if ((fptr = fopen(filename, "wb")) == NULL) {
-        printf("Failed to open file %s for writing\n", filename);
+        LOGE("Failed to open file %s for writing\n", filename);
         return -1;
     }
 
