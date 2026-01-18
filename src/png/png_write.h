@@ -10,6 +10,6 @@ struct huffmanCode {
     uint8_t length; // number of bits
 };
 
-int png_save(char filename[]);
+int png_save(char filename[], uint8_t *data, uint32_t width, uint32_t height, uint8_t bpp);
 
 #endif  // PNG_WRITE_H

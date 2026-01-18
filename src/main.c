@@ -1,10 +1,12 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "bmp/bmp.h"
 #include "png/png.h"
 #include "png/png_write.h"
+#include "./display/display.h"
 
-void print_usage() {
+void printUsage() {
     printf("Usage: ./parser [OPTIONS] INPUT_FILE\n\n");
     printf("Arguments:\n");
     printf("  INPUT_FILE\tPath to the input file to parse (required)\n\n");
@@ -16,25 +18,26 @@ void print_usage() {
     printf("  ./parser --display image.png\n");
 }
 
-void processFile(char *filename, int display) {
+uint8_t *openImage(char *filename, uint32_t* width, uint32_t* height) {
     char *ext = strrchr(filename, '.');
     if (ext == NULL) {
         printf("Error: No file extension found in \"%s\"\n", filename);
-        return;
+        return NULL;
     }
 
     if (strcasecmp(ext, ".bmp") == 0) {
         bmp_open(filename);
     } else if (strcasecmp(ext, ".png") == 0) {
-        png_open(filename, display);
+        return png_open(filename, width, height);
     } else {
         printf("Error: Unsupported file format \"%s\"\n", ext);
     }
+    return NULL;
 }
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        print_usage();
+        printUsage();
         return 1;
     }
 
@@ -45,7 +48,7 @@ int main(int argc, char **argv) {
     // Iterate over arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            print_usage();
+            printUsage();
             return 0;
         } else if (strcmp(argv[i], "-d") == 0 ||
             strcmp(argv[i], "--disp") == 0 ||
@@ -62,12 +65,12 @@ int main(int argc, char **argv) {
                 input_file = argv[i];
             } else {
                 fprintf(stderr, "Unexpected argument: %s\n", argv[i]);
-                print_usage();
+                printUsage();
                 return 1;
             }
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            print_usage();
+            printUsage();
             return 1;
         }
     }
@@ -75,14 +78,26 @@ int main(int argc, char **argv) {
     if (!input_file) {
         // input_file = "assets/example.png";
         fprintf(stderr, "Error: INPUT_FILE is required\n");
-        print_usage();
+        printUsage();
         return 1;
     }
 
-    processFile(input_file, display);
-    if (save) {
-        png_save("output.png");
+    uint32_t width, height;
+    uint8_t *pixelData = openImage(input_file, &width, &height);
+    if (pixelData == NULL) {
+        printf("Error opening the image\n");
+        return 1;
     }
+
+    if (display) {
+        show_raw_pixels(pixelData, width, height);
+    }
+
+    if (save) {
+        png_save("output.png", pixelData, width, height, 3);
+    }
+
+    free(pixelData);
 
     return 0;
 }

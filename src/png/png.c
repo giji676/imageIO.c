@@ -1,6 +1,5 @@
 #include "./png.h"
 #include "../crc/crc.h"
-#include "../display/display.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -479,26 +478,26 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *imag
     return chunkCount;
 }
 
-void png_open(char filename[], int display) {
+uint8_t *png_open(char filename[], uint32_t *width, uint32_t *height) {
     FILE *fptr;
 
     make_crc_table();
 
     if ((fptr = fopen(filename, "rb")) == NULL) {
         printf("Failed to open file %s\n", filename);
-        return;
+        return NULL;
     }
 
     struct png_fileSignature png_fileSignature;
     if (png_readFileSignature(fptr, &png_fileSignature) != 1) {
-        return;
+        return NULL;
     }
     // png_printFileSignature(&png_fileSignature);
 
     struct png_chunk *chunks = malloc(sizeof(struct png_chunk));
     if (chunks == NULL) {
         printf("Failed to allocte memory for chunks\n");
-        return;
+        return NULL;
     }
 
     struct png_image image = {0};
@@ -506,18 +505,17 @@ void png_open(char filename[], int display) {
     if (chunkCount < 0) {
         printf("Error reading chunks\n");
         fclose(fptr);
-        return;
+        return NULL;
     }
     fclose(fptr);
 
     png_printPixels(image.pixels, &image.ihdr);
-    if (display) {
-        show_raw_pixels(image.pixels, image.ihdr.width, image.ihdr.height);
-    }
-    free(image.pixels);
+    *width = image.ihdr.width;
+    *height = image.ihdr.height;
 
     for (int i = 0; i < chunkCount; ++i) {
         free(chunks[i].chunkData);
     }
     free(chunks);
+    return image.pixels;
 }

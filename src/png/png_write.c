@@ -151,7 +151,7 @@ void write_chunk(FILE *fptr, struct png_chunk *chunk) {
     free(buff);
 }
 
-int png_save(char filename[]) {
+int png_save(char filename[], uint8_t *data, uint32_t width, uint32_t height, uint8_t bpp) {
     FILE *fptr;
     if ((fptr = fopen(filename, "wb")) == NULL) {
         printf("Failed to open file %s for writing\n", filename);
@@ -163,8 +163,8 @@ int png_save(char filename[]) {
     };
 
     struct png_IHDR ihdr = {
-        .width = 2,
-        .height = 2,
+        .width = width,
+        .height = height,
         .bitDepth = 8,
         .colorType = 2,
         .compressionMethod = 0,
@@ -181,20 +181,8 @@ int png_save(char filename[]) {
     struct png_image image;
     image.ihdr = ihdr;
 
-    uint8_t *pixelData = malloc(2*2*3);
-    if (pixelData == NULL) {
-        printf("Failed to allocate memory for raw image pixel data\n");
-        return -1;
-    }
-
-    memcpy(pixelData, (uint8_t[]){
-        0xFF, 0x00, 0x00,
-        0x00, 0xFF, 0x00,
-        0x00, 0x00, 0xFF,
-        0xFF, 0xFF, 0xFF
-    }, 2 * 2 * 3);
-    image.pixels = pixelData;
-    image.pixel_size = ihdr.width * ihdr.height * 3;
+    image.pixels = data;
+    image.pixel_size = ihdr.width * ihdr.height * bpp;
 
     struct png_IDAT idat;
 
@@ -218,7 +206,7 @@ int png_save(char filename[]) {
     write_chunk(fptr, &idat_chunk);
     write_chunk(fptr, &iend_chunk);
     free(compressed);
-    free(pixelData);
+    // free(data);
 
     fclose(fptr);
     return 1;
