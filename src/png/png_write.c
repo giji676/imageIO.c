@@ -96,6 +96,7 @@ uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, int *out_le
         a = (a + idat->data[i]) % 65521;
         b = (b + a) % 65521;
     }
+    free(idat->data);
     uint32_t adler32 = __builtin_bswap32((b << 16) | a);
     bitstream_write(&bs, 32, adler32);
 
@@ -217,6 +218,7 @@ int png_save(char filename[]) {
     write_chunk(fptr, &idat_chunk);
     write_chunk(fptr, &iend_chunk);
     free(compressed);
+    free(pixelData);
 
     fclose(fptr);
     return 1;
