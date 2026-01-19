@@ -136,6 +136,95 @@ int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol) {
     return -1;
 }
 
+/*                  LENGTH TABLE                    */
+//      Extra               Extra               Extra
+// Code Bits Length(s) Code Bits Lengths   Code Bits Length(s)
+// ---- ---- ------     ---- ---- -------   ---- ---- -------
+//  257   0     3       267   1   15,16     277   4   67-82
+//  258   0     4       268   1   17,18     278   4   83-98
+//  259   0     5       269   2   19-22     279   4   99-114
+//  260   0     6       270   2   23-26     280   4  115-130
+//  261   0     7       271   2   27-30     281   5  131-162
+//  262   0     8       272   2   31-34     282   5  163-194
+//  263   0     9       273   3   35-42     283   5  195-226
+//  264   0    10       274   3   43-50     284   5  227-257
+//  265   1  11,12      275   3   51-58     285   0    258
+//  266   1  13,14      276   3   59-66
+//
+/*                  DISTANCE TABLE                  */
+//      Extra           Extra               Extra
+// Code Bits Dist  Code Bits   Dist     Code Bits Distance
+// ---- ---- ----  ---- ----  ------    ---- ---- --------
+//   0   0    1     10   4     33-48    20    9   1025-1536
+//   1   0    2     11   4     49-64    21    9   1537-2048
+//   2   0    3     12   5     65-96    22   10   2049-3072
+//   3   0    4     13   5     97-128   23   10   3073-4096
+//   4   1   5,6    14   6    129-192   24   11   4097-6144
+//   5   1   7,8    15   6    193-256   25   11   6145-8192
+//   6   2   9-12   16   7    257-384   26   12  8193-12288
+//   7   2  13-16   17   7    385-512   27   12 12289-16384
+//   8   3  17-24   18   8    513-768   28   13 16385-24576
+//   9   3  25-32   19   8   769-1024   29   13 24577-32768
+static const uint16_t dist_base[30] = {
+    1,2,3,4,         // 0-3
+    5,7,9,13,        // 4-7
+    17,25,33,49,     // 8-11
+    65,97,129,193,   // 12-15
+    257,385,513,769, // 16-19
+    1025,1537,2049,3073, // 20-23
+    4097,6145,8193,12289,// 24-27
+    16385,24577         // 28-29
+};
+static const uint8_t dist_extra[30] = {
+    0,0,0,0,
+    1,1,2,2,
+    3,3,4,4,
+    5,5,6,6,
+    7,7,8,8,
+    9,9,10,10,
+    11,11,12,12,
+    13,13
+};
+static const uint16_t len_base[29] = {
+  3,4,5,6,7,8,9,10,   // 257-264
+  11,13,15,17,         // 265-268
+  19,23,27,31,         // 269-272
+  35,43,51,59,         // 273-276
+  67,83,99,115,        // 277-280
+  131,163,195,227,     // 281-284
+  258                  // 285
+};
+static const uint8_t len_extra[29] = {
+  0,0,0,0,0,0,0,0,   // 257-264
+  1,1,1,1,            // 265-268
+  2,2,2,2,            // 269-272
+  3,3,3,3,            // 273-276
+  4,4,4,4,            // 277-280
+  5,5,5,5,            // 281-284
+  0                   // 285
+};
+int png_lenFromSym(struct bitStream *ds, uint32_t symbol) {
+    if (symbol < 257) return -1;
+
+    int length = 0;
+    int index = symbol - 257;
+    uint32_t extra_val = 0;
+    if (len_extra[index] > 0) {
+        bitstream_read(ds, len_extra[index], &extra_val);
+    }
+    length = len_base[index] + extra_val;
+    return length;
+}
+
+int png_distFromSym(struct bitStream *ds, uint32_t symbol) {
+    if (symbol > 29) return -1;
+    uint32_t extra_val = 0;
+    if (dist_extra[symbol] > 0) {
+        bitstream_read(ds, dist_extra[symbol], &extra_val);
+    }
+    return dist_base[symbol] + extra_val;
+}
+
 int png_fixedHuffmanDecode(struct bitStream *ds,
                            uint8_t *output,
                            size_t *output_pos,
@@ -163,7 +252,27 @@ int png_fixedHuffmanDecode(struct bitStream *ds,
             (*output_pos)++;
             continue;
         }
+        if (symbol >= 257 && symbol <=  285) {
+            int length = png_lenFromSym(ds, symbol);
 
+            /* decode distance symbol (5 bits for fixed Huffman) */
+            uint32_t dist_sym;
+            bitstream_read(ds, 5, &dist_sym);  // FIXED HUFFMAN DISTANCE: always 5 bits
+            dist_sym = reverse_bits(dist_sym, 5);
+
+            int distance = png_distFromSym(ds, dist_sym); // pass 0–29 symbol
+            /* copy 'length' bytes from output[pos - distance]' */
+            if (*output_pos + length > expected) {
+                LOGE("Output buffer overflow\n");
+                return -1;
+            }
+            for (int i = 0; i < length; i++) {
+                output[*output_pos] = output[*output_pos - distance];
+                (*output_pos)++;
+            }
+            continue;
+            return 0;
+        }
         /* ---- length/distance (not implemented yet) ---- */
         LOGE("Length/distance symbol %u encountered (not handled yet)\n", symbol);
         return -1;
@@ -202,17 +311,6 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     LOGI("BFINAL: %u ", bfinal);
     LOGI_RAW("BTYPE: %u\n", btype);
 
-    // Lit Value    Bits        Codes
-    // ---------    ----        -----
-    //   0 - 143     8          00110000 through
-    //                          10111111
-    // 144 - 255     9          110010000 through
-    //                          111111111
-    // 256 - 279     7          0000000 through
-    //                          0010111
-    // 280 - 287     8          11000000 through
-    //                          11000111
-
     size_t expected = height * (width * bpp + 1);
     uint8_t *output = malloc(expected);
     if (!output) {
@@ -221,8 +319,14 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     }
     size_t output_pos = 0;
 
-    if (png_fixedHuffmanDecode(&ds, output, &output_pos, expected) == -1) {
-        LOGE("Decompression failed\n");
+    if (btype == 1) {
+        if (png_fixedHuffmanDecode(&ds, output, &output_pos, expected) == -1) {
+            LOGE("Decompression failed\n");
+            free(output);
+            return NULL;
+        }
+    } else if (btype == 2) {
+        LOGE("UNIMPLEMENTED BTYPE: 2\n");
         free(output);
         return NULL;
     }
