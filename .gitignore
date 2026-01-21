@@ -2,6 +2,7 @@
 *.png
 !example.bmp
 !example.png
+!*.example.png
 build/
 main
 parser
