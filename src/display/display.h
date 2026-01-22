@@ -5,4 +5,4 @@
 #include <stdint.h>
 #include <unistd.h> // for sleep
 
-void show_raw_pixels(uint8_t *pixels, int width, int height);
+void show_raw_pixels(uint8_t *pixels, int width, int height, int bpp);

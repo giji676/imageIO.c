@@ -52,40 +52,24 @@ struct png_PLTE {
 
 struct png_tRNS {
     uint8_t *alpha;
-    size_t length;
+    uint32_t length;
 };
 
 struct png_image {
     struct png_IHDR ihdr;
     struct png_PLTE plte;
+    struct png_tRNS trns;
     uint8_t *pixels;
     size_t pixel_size; // total size of pixel data in bytes
 };
 
-int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature);
-int png_readChunks(FILE *fptr, struct png_chunk **chunk, struct png_image *image);
-int png_readChunk(FILE *fptr, struct png_chunk *chunk);
-int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat);
+struct output_image {
+    uint8_t *pixels;
+    uint32_t width;
+    uint32_t height;
+    uint8_t bpp;
+};
 
-void png_printIHDR(struct png_IHDR *ihdr);
-uint8_t *png_processIDAT(void *data, uint32_t length,
-                         struct png_IHDR *ihdr,
-                         size_t *out_size);
-void png_printzTXt(void *data);
-void png_printFileSignature(struct png_fileSignature *fileSignature);
-void png_printChunk(struct png_chunk *chunk, struct png_image *image);
-void png_printIDAT(struct png_IDAT *idat);
-void png_printPixels(void *pixels, struct png_IHDR *ihdr, struct png_PLTE *plte);
-
-int png_fixedHuffmanDecode(struct bitStream *ds,
-                           uint8_t *output,
-                           size_t *output_pos,
-                           uint32_t expected);
-int png_decodeFixedHuffmanSymbol(struct bitStream *ds, uint32_t *symbol);
-void png_interpretzTXt(void *data, uint32_t length);
-uint8_t *png_open(char filename[], uint32_t *width, uint32_t *height);
-int png_compareCRC(struct png_chunk *chunk);
-int png_calculateCRC(struct png_chunk *chunk);
-int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos);
+struct output_image *png_open(char filename[]);
 
 #endif  // PNG_H

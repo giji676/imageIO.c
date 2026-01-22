@@ -24,7 +24,7 @@ void printUsage() {
     printf("  ./parser --display image.png\n");
 }
 
-uint8_t *openImage(char *filename, uint32_t* width, uint32_t* height) {
+struct output_image *openImage(char *filename) {
     char *ext = strrchr(filename, '.');
     if (ext == NULL) {
         printf("Error: No file extension found in \"%s\"\n", filename);
@@ -34,7 +34,7 @@ uint8_t *openImage(char *filename, uint32_t* width, uint32_t* height) {
     if (strcasecmp(ext, ".bmp") == 0) {
         bmp_open(filename);
     } else if (strcasecmp(ext, ".png") == 0) {
-        return png_open(filename, width, height);
+        return png_open(filename);
     } else {
         printf("Error: Unsupported file format \"%s\"\n", ext);
     }
@@ -94,22 +94,22 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    uint32_t width, height;
-    uint8_t *pixelData = openImage(input_file, &width, &height);
-    if (pixelData == NULL) {
+    struct output_image *image = openImage(input_file);
+    if (image == NULL) {
         printf("Error opening the image\n");
         return 1;
     }
 
     if (display) {
-        show_raw_pixels(pixelData, width, height);
+        show_raw_pixels(image->pixels, image->width, image->height, image->bpp);
     }
 
     if (save) {
-        png_save("output.png", pixelData, width, height, 3);
+        png_save("output.png", image->pixels, image->width, image->height, image->bpp);
     }
 
-    free(pixelData);
+    free(image->pixels);
+    free(image);
 
     return 0;
 }

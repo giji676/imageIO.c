@@ -21,7 +21,7 @@ void png_printPixels(void *pixels, struct png_IHDR *ihdr, struct png_PLTE *plte)
 
                         uint8_t index = indices[i * ihdr->width + j];
 
-                        if (index * 3 + 2 >= plte->length) {
+                        if ((uint32_t)(index * 3 + 2) >= plte->length) {
                             LOGE("Palette index out of range: %u\n", index);
                             break;
                         }
@@ -611,70 +611,6 @@ void png_printIHDR(struct png_IHDR *ihdr) {
     LOGI("interlaceMethod: %u\n", ihdr->interlaceMethod);
 }
 
-void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
-    LOGI("\n");
-    LOGI("Chunk\n");
-    LOGI("length: %u\n", chunk->length);
-    LOGI("chunkType: %.4s\n", chunk->chunkType);
-    if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
-        memcpy(&image->ihdr, chunk->chunkData, sizeof(struct png_IHDR));
-
-        image->ihdr.width  = __builtin_bswap32(image->ihdr.width);
-        image->ihdr.height = __builtin_bswap32(image->ihdr.height);
-
-        png_printIHDR((struct png_IHDR *)chunk->chunkData);
-    } else if (strncmp(chunk->chunkType, "PLTE", 4) == 0) {
-        image->plte.length = chunk->length;
-        image->plte.data = chunk->chunkData;
-    } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-        image->pixels = png_processIDAT(
-            chunk->chunkData,
-            chunk->length,
-            &image->ihdr,
-            &image->pixel_size
-        );
-        if (image->pixels == NULL) {
-            LOGE("Failed to process IDAT chunk\n");
-        }
-    } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
-        LOGI("zTXt chunk data: ...");
-        png_interpretzTXt(chunk->chunkData, chunk->length);
-    } else {
-        LOGI("chunkData:");
-        for (uint32_t i = 0; i < chunk->length; ++i) {
-            if (i % 16 == 0) {
-                LOGI_RAW("\n");
-            }
-            LOGI_RAW("%02x ", ((unsigned char *)chunk->chunkData)[i]);
-        }
-        LOGI_RAW("\n");
-    }
-    LOGI("expected crc: 0x%08X\n", chunk->crc);
-    if (!png_compareCRC(chunk)) {
-        LOGE("CRC NOT MATCHING\n");
-    }
-}
-
-int png_compareCRC(struct png_chunk *chunk) {
-    int crc_inp_len = sizeof(chunk->chunkType) + (int)chunk->length;
-    unsigned char *buff = malloc(crc_inp_len);
-    if (buff == NULL) {
-        LOGE("Failed to allocate memory for chunk crc buffer\n");
-        return -1;
-    }
-    memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
-    memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
-
-    unsigned long res = crc(buff, crc_inp_len);
-    LOGI("calculated crc: 0x%lX\n", res);
-    free(buff);
-    if (res == chunk->crc) {
-        return 1;
-    } else {
-        return 0;
-    }
-}
-
 void png_interpretzTXt(void *data, uint32_t length) {
     if (data == NULL || length == 0) {
         LOGE("Invalid zTXt data\n");
@@ -710,6 +646,73 @@ void png_interpretzTXt(void *data, uint32_t length) {
             LOGI("\n");
         }
         LOGI("%02x ", (unsigned char)ztxt.compText[i]);
+    }
+}
+
+int png_compareCRC(struct png_chunk *chunk) {
+    int crc_inp_len = sizeof(chunk->chunkType) + (int)chunk->length;
+    unsigned char *buff = malloc(crc_inp_len);
+    if (buff == NULL) {
+        LOGE("Failed to allocate memory for chunk crc buffer\n");
+        return -1;
+    }
+    memcpy(buff, chunk->chunkType, sizeof(chunk->chunkType));
+    memcpy(buff + sizeof(chunk->chunkType), chunk->chunkData, chunk->length);
+
+    unsigned long res = crc(buff, crc_inp_len);
+    LOGI("calculated crc: 0x%lX\n", res);
+    free(buff);
+    if (res == chunk->crc) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
+    LOGI("\n");
+    LOGI("Chunk\n");
+    LOGI("length: %u\n", chunk->length);
+    LOGI("chunkType: %.4s\n", chunk->chunkType);
+    if (strncmp(chunk->chunkType, "IHDR", 4) == 0) {
+        memcpy(&image->ihdr, chunk->chunkData, sizeof(struct png_IHDR));
+
+        image->ihdr.width  = __builtin_bswap32(image->ihdr.width);
+        image->ihdr.height = __builtin_bswap32(image->ihdr.height);
+
+        png_printIHDR((struct png_IHDR *)chunk->chunkData);
+    } else if (strncmp(chunk->chunkType, "PLTE", 4) == 0) {
+        image->plte.length = chunk->length;
+        image->plte.data = chunk->chunkData;
+    } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
+        image->pixels = png_processIDAT(
+            chunk->chunkData,
+            chunk->length,
+            &image->ihdr,
+            &image->pixel_size
+        );
+        if (image->pixels == NULL) {
+            LOGE("Failed to process IDAT chunk\n");
+        }
+    } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
+        LOGI("zTXt chunk data: ...");
+        png_interpretzTXt(chunk->chunkData, chunk->length);
+    } else if (strncmp(chunk->chunkType, "tRNS", 4) == 0) {
+        image->trns.alpha = chunk->chunkData;
+        image->trns.length = chunk->length;
+    } else {
+        LOGI("chunkData:");
+        for (uint32_t i = 0; i < chunk->length; ++i) {
+            if (i % 16 == 0) {
+                LOGI_RAW("\n");
+            }
+            LOGI_RAW("%02x ", ((unsigned char *)chunk->chunkData)[i]);
+        }
+        LOGI_RAW("\n");
+    }
+    LOGI("expected crc: 0x%08X\n", chunk->crc);
+    if (!png_compareCRC(chunk)) {
+        LOGE("CRC NOT MATCHING\n");
     }
 }
 
@@ -795,7 +798,62 @@ int png_readChunks(FILE *fptr, struct png_chunk **chunks, struct png_image *imag
     return chunkCount;
 }
 
-uint8_t *png_open(char filename[], uint32_t *width, uint32_t *height) {
+struct output_image *png_finalImageConstruction(struct png_image *image) {
+    struct output_image *output_image = malloc(sizeof(struct output_image));
+
+    output_image->width  = image->ihdr.width;
+    output_image->height = image->ihdr.height;
+
+    int has_alpha = (image->trns.length > 0);
+    output_image->bpp = has_alpha ? 4 : 3;
+
+    size_t pixel_count = output_image->width * output_image->height;
+    output_image->pixels = malloc(pixel_count * output_image->bpp);
+
+    /* truecolor (RGB) */
+    if (image->ihdr.colorType == 2) {
+        for (size_t i = 0; i < pixel_count; i++) {
+            uint8_t r = image->pixels[i * 3 + 0];
+            uint8_t g = image->pixels[i * 3 + 1];
+            uint8_t b = image->pixels[i * 3 + 2];
+
+            output_image->pixels[i * output_image->bpp + 0] = r;
+            output_image->pixels[i * output_image->bpp + 1] = g;
+            output_image->pixels[i * output_image->bpp + 2] = b;
+
+            if (has_alpha) {
+                output_image->pixels[i * output_image->bpp + 3] = 255;
+            }
+        }
+        return output_image;
+    }
+
+    /* indexed color (PLTE) */
+    if (image->ihdr.colorType == 3 && image->plte.length > 0) {
+        for (size_t i = 0; i < pixel_count; i++) {
+            uint8_t idx = image->pixels[i];
+            uint8_t *pal = &image->plte.data[idx * 3];
+
+            output_image->pixels[i * output_image->bpp + 0] = pal[0];
+            output_image->pixels[i * output_image->bpp + 1] = pal[1];
+            output_image->pixels[i * output_image->bpp + 2] = pal[2];
+
+            if (has_alpha) {
+                if (idx < image->trns.length)
+                    output_image->pixels[i * output_image->bpp + 3] = image->trns.alpha[idx];
+                else
+                    output_image->pixels[i * output_image->bpp + 3] = 255;
+            }
+        }
+        return output_image;
+    }
+
+    free(output_image->pixels);
+    free(output_image);
+    return NULL;
+}
+
+struct output_image *png_open(char filename[]) {
     FILE *fptr;
 
     make_crc_table();
@@ -826,15 +884,16 @@ uint8_t *png_open(char filename[], uint32_t *width, uint32_t *height) {
     }
     fclose(fptr);
 
+    struct output_image *output_image = png_finalImageConstruction(&image);
+
     if (image.pixels != NULL) {
-        png_printPixels(image.pixels, &image.ihdr, &image.plte);
+        // png_printPixels(image.pixels, &image.ihdr, &image.plte);
     }
-    *width = image.ihdr.width;
-    *height = image.ihdr.height;
 
     for (int i = 0; i < chunkCount; ++i) {
         free(chunks[i].chunkData);
     }
     free(chunks);
-    return image.pixels;
+
+    return output_image;
 }
