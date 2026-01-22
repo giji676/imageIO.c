@@ -225,60 +225,6 @@ int png_distFromSym(struct bitStream *ds, uint32_t symbol) {
     return dist_base[symbol] + extra_val;
 }
 
-int png_fixedHuffmanDecode(struct bitStream *ds,
-                           uint8_t *output,
-                           size_t *output_pos,
-                           uint32_t expected) {
-    while (1) {
-        uint32_t symbol;
-        if (png_decodeFixedHuffmanSymbol(ds, &symbol) != 0) {
-            LOGE("Invalid Huffman symbol\n");
-            return -1;
-        }
-
-        /* ---- termination ---- */
-        if (symbol == 256) {
-            LOGI("End of block symbol encountered\n");
-            return 0;
-        }
-
-        /* ---- literal ---- */
-        if (symbol < 256) {
-            if (*output_pos >= expected) {
-                LOGE("Output buffer overflow\n");
-                return -1;
-            }
-            output[*output_pos] = (uint8_t)symbol;
-            (*output_pos)++;
-            continue;
-        }
-        if (symbol >= 257 && symbol <=  285) {
-            int length = png_lenFromSym(ds, symbol);
-
-            /* decode distance symbol (5 bits for fixed Huffman) */
-            uint32_t dist_sym;
-            bitstream_read(ds, 5, &dist_sym);  // FIXED HUFFMAN DISTANCE: always 5 bits
-            dist_sym = reverse_bits(dist_sym, 5);
-
-            int distance = png_distFromSym(ds, dist_sym); // pass 0–29 symbol
-            /* copy 'length' bytes from output[pos - distance]' */
-            if (*output_pos + length > expected) {
-                LOGE("Output buffer overflow\n");
-                return -1;
-            }
-            for (int i = 0; i < length; i++) {
-                output[*output_pos] = output[*output_pos - distance];
-                (*output_pos)++;
-            }
-            continue;
-            return 0;
-        }
-        /* ---- length/distance (not implemented yet) ---- */
-        LOGE("Length/distance symbol %u encountered (not handled yet)\n", symbol);
-        return -1;
-    }
-}
-
 uint32_t decode_symbol(struct bitStream *ds, uint32_t *codes, uint8_t *lengths, uint32_t num_symbols, uint32_t max_len) {
     uint32_t code = 0;
 
@@ -298,196 +244,69 @@ uint32_t decode_symbol(struct bitStream *ds, uint32_t *codes, uint8_t *lengths, 
     return 0xFFFFFFFF; // Error: no match found
 }
 
-int png_dynamicHuffmanDecode(struct bitStream *ds,
-                             uint8_t *output,
-                             size_t *output_pos,
-                             uint32_t expected) {
-    static const uint8_t cl_order[19] = {
-        16, 17, 18, 0, 8, 7, 9, 6, 10, 5,
-        11, 4, 12, 3, 13, 2, 14, 1, 15
-    };
-
-    uint32_t hlit, hdist, hclen;
-
-    bitstream_read(ds, 5, &hlit);
-    hlit += 257;
-
-    bitstream_read(ds, 5, &hdist);
-    hdist += 1;
-
-    bitstream_read(ds, 4, &hclen);
-    hclen += 4;
-
-    LOGI("HLIT=%u HDIST=%u HCLEN=%u\n", hlit, hdist, hclen);
-
-    /* Code-length code lengths */
-    uint8_t cl_lengths[19] = {0};
-
-    for (uint32_t i = 0; i < hclen; i++) {
-        uint32_t v;
-        bitstream_read(ds, 3, &v);
-        cl_lengths[cl_order[i]] = (uint8_t)v;
-        // printf("CLS%u = %u\n", i, cl_lengths[cl_order[i]]);
+// Decode one symbol - works for both fixed and dynamic Huffman
+uint32_t decode_ll_symbol(struct bitStream *ds, int is_dynamic, 
+                         uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit) {
+    if (is_dynamic) {
+        return decode_symbol(ds, ll_codes, ll_lengths, hlit, 15);
+    } else {
+        uint32_t symbol;
+        png_decodeFixedHuffmanSymbol(ds, &symbol);
+        return symbol;
     }
+}
 
-    // Count how many codes of each length
-    uint32_t bl_count[8] = {0}; // Max length is 7 (3 bits)
-    for (uint32_t i = 0; i < 19; i++) {
-        if (cl_lengths[i] > 0) {
-            bl_count[cl_lengths[i]]++;
-        }
+uint32_t decode_dist_symbol(struct bitStream *ds, int is_dynamic,
+                            uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
+    if (is_dynamic) {
+        return decode_symbol(ds, dist_codes, dist_lengths, hdist, 15);
+    } else {
+        uint32_t dist_sym;
+        bitstream_read(ds, 5, &dist_sym);
+        return reverse_bits(dist_sym, 5);
     }
-    // Find the first code value for each length
-    uint32_t next_code[8] = {0};
-    uint32_t code = 0;
-    for (uint32_t bits = 1; bits < 8; bits++) {
-        code = (code + bl_count[bits - 1]) << 1;
-        next_code[bits] = code;
-    }
+}
 
-    // Assign codes to symbols
-    uint32_t codes[19];
-    for (uint32_t i = 0; i < 19; i++) {
-        uint32_t len = cl_lengths[i];
-        if (len > 0) {
-            codes[i] = next_code[len];
-            next_code[len]++;
-        }
-    }
-
-    // Decode the literal/length and distance code lengths
-    uint8_t ll_lengths[288];  // Max possible (hlit <= 286)
-    uint8_t dist_lengths[32]; // Max possible (hdist <= 30)
-
-    uint32_t total_codes = hlit + hdist;
-    uint32_t decoded = 0;
-    uint8_t last_value = 0;
-
-    while (decoded < total_codes) {
-        uint32_t symbol = decode_symbol(ds, codes, cl_lengths, 19, 7);
-
-        if (symbol < 16) {
-            // Literal code length value
-            if (decoded < hlit) {
-                ll_lengths[decoded] = symbol;
-            } else {
-                dist_lengths[decoded - hlit] = symbol;
-            }
-            last_value = symbol;
-            decoded++;
-        } else if (symbol == 16) {
-            // Repeat last value 3-6 times
-            uint32_t repeat;
-            bitstream_read(ds, 2, &repeat);
-            repeat += 3;
-            for (uint32_t i = 0; i < repeat && decoded < total_codes; i++) {
-                if (decoded < hlit) {
-                    ll_lengths[decoded] = last_value;
-                } else {
-                    dist_lengths[decoded - hlit] = last_value;
-                }
-                decoded++;
-            }
-        } else if (symbol == 17) {
-            // Repeat 0 for 3-10 times
-            uint32_t repeat;
-            bitstream_read(ds, 3, &repeat);
-            repeat += 3;
-            for (uint32_t i = 0; i < repeat && decoded < total_codes; i++) {
-                if (decoded < hlit) {
-                    ll_lengths[decoded] = 0;
-                } else {
-                    dist_lengths[decoded - hlit] = 0;
-                }
-                decoded++;
-            }
-            last_value = 0;
-        } else if (symbol == 18) {
-            // Repeat 0 for 11-138 times
-            uint32_t repeat;
-            bitstream_read(ds, 7, &repeat);
-            repeat += 11;
-            for (uint32_t i = 0; i < repeat && decoded < total_codes; i++) {
-                if (decoded < hlit) {
-                    ll_lengths[decoded] = 0;
-                } else {
-                    dist_lengths[decoded - hlit] = 0;
-                }
-                decoded++;
-            }
-            last_value = 0;
-        }
-    }
-
-    LOGI("Decoded %u code lengths\n", decoded);
-
-    // Build literal/length tree (same algorithm as before)
-    uint32_t ll_bl_count[16] = {0}; // Max length can be 15
-    for (uint32_t i = 0; i < hlit; i++) {
-        if (ll_lengths[i] > 0) {
-            ll_bl_count[ll_lengths[i]]++;
-        }
-    }
-
-    uint32_t ll_next_code[16] = {0};
-    code = 0;
-    for (uint32_t bits = 1; bits < 16; bits++) {
-        code = (code + ll_bl_count[bits - 1]) << 1;
-        ll_next_code[bits] = code;
-    }
-
-    uint32_t ll_codes[288];
-    for (uint32_t i = 0; i < hlit; i++) {
-        uint32_t len = ll_lengths[i];
-        if (len > 0) {
-            ll_codes[i] = ll_next_code[len];
-            ll_next_code[len]++;
-        }
-    }
-    // Build distance tree
-    uint32_t dist_bl_count[16] = {0};
-    for (uint32_t i = 0; i < hdist; i++) {
-        if (dist_lengths[i] > 0) {
-            dist_bl_count[dist_lengths[i]]++;
-        }
-    }
-
-    uint32_t dist_next_code[16] = {0};
-    code = 0;
-    for (uint32_t bits = 1; bits < 16; bits++) {
-        code = (code + dist_bl_count[bits - 1]) << 1;
-        dist_next_code[bits] = code;
-    }
-
-    uint32_t dist_codes[32];
-    for (uint32_t i = 0; i < hdist; i++) {
-        uint32_t len = dist_lengths[i];
-        if (len > 0) {
-            dist_codes[i] = dist_next_code[len];
-            dist_next_code[len]++;
-        }
-    }
-    // Decode the compressed data
+int png_huffmanDecode(struct bitStream *ds,
+                     uint8_t *output,
+                     size_t *output_pos,
+                     uint32_t expected,
+                     int is_dynamic,
+                     uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit,
+                     uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
     while (*output_pos < expected) {
-        // Decode a literal/length symbol
-        uint32_t symbol = decode_symbol(ds, ll_codes, ll_lengths, hlit, 15);
+        uint32_t symbol = decode_ll_symbol(ds, is_dynamic, ll_codes, ll_lengths, hlit);
+        
+        if (symbol == 0xFFFFFFFF) {
+            LOGE("Invalid Huffman symbol\n");
+            return -1;
+        }
 
+        // End of block
+        if (symbol == 256) {
+            LOGI("End of block symbol encountered\n");
+            return 0;
+        }
+
+        // Literal byte
         if (symbol < 256) {
-            // Literal byte
-            output[(*output_pos)++] = (uint8_t)symbol;
-        } else if (symbol == 256) {
-            // End of block
-            break;
-        } else if (symbol >= 257 && symbol <= 285) {
-            // Length/distance pair - same as fixed Huffman
+            if (*output_pos >= expected) {
+                LOGE("Output buffer overflow\n");
+                return -1;
+            }
+            output[*output_pos] = (uint8_t)symbol;
+            (*output_pos)++;
+            continue;
+        }
+
+        // Length/distance pair (257-285)
+        if (symbol >= 257 && symbol <= 285) {
             int length = png_lenFromSym(ds, symbol);
-
-            // Decode distance symbol using the distance tree
-            uint32_t dist_sym = decode_symbol(ds, dist_codes, dist_lengths, hdist, 15);
-
+            
+            uint32_t dist_sym = decode_dist_symbol(ds, is_dynamic, 
+                                                   dist_codes, dist_lengths, hdist);
             int distance = png_distFromSym(ds, dist_sym);
 
-            // Copy 'length' bytes from 'distance' bytes back
             if (*output_pos + length > expected) {
                 LOGE("Output buffer overflow\n");
                 return -1;
@@ -496,11 +315,125 @@ int png_dynamicHuffmanDecode(struct bitStream *ds,
                 output[*output_pos] = output[*output_pos - distance];
                 (*output_pos)++;
             }
+            continue;
+        }
+
+        LOGE("Unexpected symbol %u\n", symbol);
+        return -1;
+    }
+    
+    return 0;
+}
+
+void build_canonical_huffman(uint8_t *lengths, uint32_t num_symbols,
+                            uint32_t *codes, uint32_t max_bits) {
+    uint32_t bl_count[16] = {0};
+    
+    // Count codes of each length
+    for (uint32_t i = 0; i < num_symbols; i++) {
+        if (lengths[i] > 0) {
+            bl_count[lengths[i]]++;
         }
     }
-    LOGI("SUCCESSS\n");
+    
+    // Find first code for each length
+    uint32_t next_code[16] = {0};
+    uint32_t code = 0;
+    for (uint32_t bits = 1; bits < max_bits; bits++) {
+        code = (code + bl_count[bits - 1]) << 1;
+        next_code[bits] = code;
+    }
+    
+    // Assign codes to symbols
+    for (uint32_t i = 0; i < num_symbols; i++) {
+        uint32_t len = lengths[i];
+        if (len > 0) {
+            codes[i] = next_code[len];
+            next_code[len]++;
+        }
+    }
+}
 
-    return 0; // Success!
+int png_fixedHuffmanDecode(struct bitStream *ds, uint8_t *output,
+                          size_t *output_pos, uint32_t expected) {
+    return png_huffmanDecode(ds, output, output_pos, expected,
+                            0, NULL, NULL, 0, NULL, NULL, 0);
+}
+
+int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
+                            size_t *output_pos, uint32_t expected) {
+    static const uint8_t cl_order[19] = {
+        16, 17, 18, 0, 8, 7, 9, 6, 10, 5,
+        11, 4, 12, 3, 13, 2, 14, 1, 15
+    };
+
+    // Read headers
+    uint32_t hlit, hdist, hclen;
+    bitstream_read(ds, 5, &hlit); hlit += 257;
+    bitstream_read(ds, 5, &hdist); hdist += 1;
+    bitstream_read(ds, 4, &hclen); hclen += 4;
+
+    // Read code-length code lengths
+    uint8_t cl_lengths[19] = {0};
+    for (uint32_t i = 0; i < hclen; i++) {
+        uint32_t v;
+        bitstream_read(ds, 3, &v);
+        cl_lengths[cl_order[i]] = (uint8_t)v;
+    }
+
+    // Build code-length tree
+    uint32_t codes[19];
+    build_canonical_huffman(cl_lengths, 19, codes, 8);
+
+    // Decode literal/length and distance code lengths
+    uint8_t ll_lengths[288] = {0};
+    uint8_t dist_lengths[32] = {0};
+    uint32_t total_codes = hlit + hdist;
+    uint32_t decoded = 0;
+    uint8_t last_value = 0;
+
+    while (decoded < total_codes) {
+        uint32_t symbol = decode_symbol(ds, codes, cl_lengths, 19, 7);
+
+        if (symbol < 16) {
+            uint8_t *target = (decoded < hlit) ? &ll_lengths[decoded] : &dist_lengths[decoded - hlit];
+            *target = symbol;
+            last_value = symbol;
+            decoded++;
+        } else if (symbol == 16) {
+            uint32_t repeat;
+            bitstream_read(ds, 2, &repeat);
+            repeat += 3;
+            for (uint32_t i = 0; i < repeat && decoded < total_codes; i++) {
+                uint8_t *target = (decoded < hlit) ? &ll_lengths[decoded] : &dist_lengths[decoded - hlit];
+                *target = last_value;
+                decoded++;
+            }
+        } else if (symbol == 17) {
+            uint32_t repeat;
+            bitstream_read(ds, 3, &repeat);
+            repeat += 3;
+            decoded += repeat;
+            last_value = 0;
+        } else if (symbol == 18) {
+            uint32_t repeat;
+            bitstream_read(ds, 7, &repeat);
+            repeat += 11;
+            decoded += repeat;
+            last_value = 0;
+        }
+    }
+
+    // Build literal/length and distance trees
+    uint32_t ll_codes[288];
+    uint32_t dist_codes[32];
+    build_canonical_huffman(ll_lengths, hlit, ll_codes, 16);
+    build_canonical_huffman(dist_lengths, hdist, dist_codes, 16);
+
+    // Decode using unified function
+    return png_huffmanDecode(ds, output, output_pos, expected,
+                            1, ll_codes, ll_lengths, hlit,
+                            dist_codes, dist_lengths, hdist);
 }
 
 uint8_t paeth_predictor(uint8_t a, uint8_t b, uint8_t c) {
