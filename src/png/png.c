@@ -5,12 +5,34 @@
 #include <string.h>
 #include "../log.h"
 
-void png_printPixels(void *pixels, struct png_IHDR *ihdr) {
+void png_printPixels(void *pixels, struct png_IHDR *ihdr, struct png_PLTE *plte) {
     for (uint32_t i = 0; i < ihdr->height; i++) {
         for (uint32_t j = 0; j < ihdr->width; j++) {
-            if (ihdr->bitDepth == 8 && ihdr->colorType == 2) {
-                struct rgbPixel *pixel = &((struct rgbPixel *)pixels)[i * ihdr->width + j];
-                LOGI_RAW("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
+            switch (ihdr->colorType) {
+                case 2:
+                    if (ihdr->bitDepth == 8) {
+                        struct rgbPixel *pixel = &((struct rgbPixel *)pixels)[i * ihdr->width + j];
+                        LOGI_RAW("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
+                    }
+                    break;
+                case 3:
+                    if (ihdr->bitDepth == 8) {
+                        uint8_t *indices = (uint8_t *)pixels;
+
+                        uint8_t index = indices[i * ihdr->width + j];
+
+                        if (index * 3 + 2 >= plte->length) {
+                            LOGE("Palette index out of range: %u\n", index);
+                            break;
+                        }
+
+                        uint8_t r = plte->data[index * 3 + 0];
+                        uint8_t g = plte->data[index * 3 + 1];
+                        uint8_t b = plte->data[index * 3 + 2];
+
+                        LOGI_RAW("(%u,%u,%u)", r, g, b);
+                    }
+                    break;
             }
             LOGI_RAW(" ");
         }
@@ -186,22 +208,22 @@ static const uint8_t dist_extra[30] = {
     13,13
 };
 static const uint16_t len_base[29] = {
-  3,4,5,6,7,8,9,10,   // 257-264
-  11,13,15,17,         // 265-268
-  19,23,27,31,         // 269-272
-  35,43,51,59,         // 273-276
-  67,83,99,115,        // 277-280
-  131,163,195,227,     // 281-284
-  258                  // 285
+    3,4,5,6,7,8,9,10,   // 257-264
+    11,13,15,17,         // 265-268
+    19,23,27,31,         // 269-272
+    35,43,51,59,         // 273-276
+    67,83,99,115,        // 277-280
+    131,163,195,227,     // 281-284
+    258                  // 285
 };
 static const uint8_t len_extra[29] = {
-  0,0,0,0,0,0,0,0,   // 257-264
-  1,1,1,1,            // 265-268
-  2,2,2,2,            // 269-272
-  3,3,3,3,            // 273-276
-  4,4,4,4,            // 277-280
-  5,5,5,5,            // 281-284
-  0                   // 285
+    0,0,0,0,0,0,0,0,   // 257-264
+    1,1,1,1,            // 265-268
+    2,2,2,2,            // 269-272
+    3,3,3,3,            // 273-276
+    4,4,4,4,            // 277-280
+    5,5,5,5,            // 281-284
+    0                   // 285
 };
 int png_lenFromSym(struct bitStream *ds, uint32_t symbol) {
     if (symbol < 257) return -1;
@@ -246,7 +268,7 @@ uint32_t decode_symbol(struct bitStream *ds, uint32_t *codes, uint8_t *lengths, 
 
 // Decode one symbol - works for both fixed and dynamic Huffman
 uint32_t decode_ll_symbol(struct bitStream *ds, int is_dynamic, 
-                         uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit) {
+                          uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit) {
     if (is_dynamic) {
         return decode_symbol(ds, ll_codes, ll_lengths, hlit, 15);
     } else {
@@ -268,15 +290,15 @@ uint32_t decode_dist_symbol(struct bitStream *ds, int is_dynamic,
 }
 
 int png_huffmanDecode(struct bitStream *ds,
-                     uint8_t *output,
-                     size_t *output_pos,
-                     uint32_t expected,
-                     int is_dynamic,
-                     uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit,
-                     uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
+                      uint8_t *output,
+                      size_t *output_pos,
+                      uint32_t expected,
+                      int is_dynamic,
+                      uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit,
+                      uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
     while (*output_pos < expected) {
         uint32_t symbol = decode_ll_symbol(ds, is_dynamic, ll_codes, ll_lengths, hlit);
-        
+
         if (symbol == 0xFFFFFFFF) {
             LOGE("Invalid Huffman symbol\n");
             return -1;
@@ -302,7 +324,7 @@ int png_huffmanDecode(struct bitStream *ds,
         // Length/distance pair (257-285)
         if (symbol >= 257 && symbol <= 285) {
             int length = png_lenFromSym(ds, symbol);
-            
+
             uint32_t dist_sym = decode_dist_symbol(ds, is_dynamic, 
                                                    dist_codes, dist_lengths, hdist);
             int distance = png_distFromSym(ds, dist_sym);
@@ -321,21 +343,21 @@ int png_huffmanDecode(struct bitStream *ds,
         LOGE("Unexpected symbol %u\n", symbol);
         return -1;
     }
-    
+
     return 0;
 }
 
 void build_canonical_huffman(uint8_t *lengths, uint32_t num_symbols,
-                            uint32_t *codes, uint32_t max_bits) {
+                             uint32_t *codes, uint32_t max_bits) {
     uint32_t bl_count[16] = {0};
-    
+
     // Count codes of each length
     for (uint32_t i = 0; i < num_symbols; i++) {
         if (lengths[i] > 0) {
             bl_count[lengths[i]]++;
         }
     }
-    
+
     // Find first code for each length
     uint32_t next_code[16] = {0};
     uint32_t code = 0;
@@ -343,7 +365,7 @@ void build_canonical_huffman(uint8_t *lengths, uint32_t num_symbols,
         code = (code + bl_count[bits - 1]) << 1;
         next_code[bits] = code;
     }
-    
+
     // Assign codes to symbols
     for (uint32_t i = 0; i < num_symbols; i++) {
         uint32_t len = lengths[i];
@@ -355,13 +377,13 @@ void build_canonical_huffman(uint8_t *lengths, uint32_t num_symbols,
 }
 
 int png_fixedHuffmanDecode(struct bitStream *ds, uint8_t *output,
-                          size_t *output_pos, uint32_t expected) {
+                           size_t *output_pos, uint32_t expected) {
     return png_huffmanDecode(ds, output, output_pos, expected,
-                            0, NULL, NULL, 0, NULL, NULL, 0);
+                             0, NULL, NULL, 0, NULL, NULL, 0);
 }
 
 int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
-                            size_t *output_pos, uint32_t expected) {
+                             size_t *output_pos, uint32_t expected) {
     static const uint8_t cl_order[19] = {
         16, 17, 18, 0, 8, 7, 9, 6, 10, 5,
         11, 4, 12, 3, 13, 2, 14, 1, 15
@@ -432,8 +454,8 @@ int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
 
     // Decode using unified function
     return png_huffmanDecode(ds, output, output_pos, expected,
-                            1, ll_codes, ll_lengths, hlit,
-                            dist_codes, dist_lengths, hdist);
+                             1, ll_codes, ll_lengths, hlit,
+                             dist_codes, dist_lengths, hdist);
 }
 
 uint8_t paeth_predictor(uint8_t a, uint8_t b, uint8_t c) {
@@ -453,12 +475,23 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     int height = ihdr->height;
     int bpp;
     switch (ihdr->colorType) {
-        case 2:
-            if (ihdr->bitDepth != 8) {
-                LOGE("Unsupported bit depth %u for color type 2\n", ihdr->bitDepth);
+        case 2: // Truecolor RGB
+            if (ihdr->bitDepth != 8 && ihdr->bitDepth != 16) {
+                LOGE("Unsupported bit depth %u for color type %u\n", ihdr->bitDepth, ihdr->colorType);
                 return NULL;
             }
-            bpp = 3;
+            bpp = (ihdr->bitDepth/8) * 3;
+            break;
+        case 3: // Indexed color (palette)
+            if (ihdr->bitDepth != 1 &&
+                ihdr->bitDepth != 2 &&
+                ihdr->bitDepth != 4 &&
+                ihdr->bitDepth != 8) {
+                LOGE("Unsupported bit depth %u for color type %u\n",
+                     ihdr->bitDepth, ihdr->colorType);
+                return NULL;
+            }
+            bpp = 1; // ALWAYS 1 for filtering
             break;
         default:
             LOGE("Unsupported color type %u\n", ihdr->colorType);
@@ -590,6 +623,9 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
         image->ihdr.height = __builtin_bswap32(image->ihdr.height);
 
         png_printIHDR((struct png_IHDR *)chunk->chunkData);
+    } else if (strncmp(chunk->chunkType, "PLTE", 4) == 0) {
+        image->plte.length = chunk->length;
+        image->plte.data = chunk->chunkData;
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
         image->pixels = png_processIDAT(
             chunk->chunkData,
@@ -607,12 +643,12 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
         LOGI("chunkData:");
         for (uint32_t i = 0; i < chunk->length; ++i) {
             if (i % 16 == 0) {
-                LOGI("\n");
+                LOGI_RAW("\n");
             }
-            LOGI("%02x ", ((unsigned char *)chunk->chunkData)[i]);
+            LOGI_RAW("%02x ", ((unsigned char *)chunk->chunkData)[i]);
         }
+        LOGI_RAW("\n");
     }
-    LOGI("\n");
     LOGI("expected crc: 0x%08X\n", chunk->crc);
     if (!png_compareCRC(chunk)) {
         LOGE("CRC NOT MATCHING\n");
@@ -790,7 +826,9 @@ uint8_t *png_open(char filename[], uint32_t *width, uint32_t *height) {
     }
     fclose(fptr);
 
-    png_printPixels(image.pixels, &image.ihdr);
+    if (image.pixels != NULL) {
+        png_printPixels(image.pixels, &image.ihdr, &image.plte);
+    }
     *width = image.ihdr.width;
     *height = image.ihdr.height;
 

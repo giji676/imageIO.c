@@ -45,8 +45,19 @@ struct png_zTXt {
     char *compText;
 };
 
+struct png_PLTE {
+    uint32_t length;
+    uint8_t *data;
+};
+
+struct png_tRNS {
+    uint8_t *alpha;
+    size_t length;
+};
+
 struct png_image {
     struct png_IHDR ihdr;
+    struct png_PLTE plte;
     uint8_t *pixels;
     size_t pixel_size; // total size of pixel data in bytes
 };
@@ -64,7 +75,7 @@ void png_printzTXt(void *data);
 void png_printFileSignature(struct png_fileSignature *fileSignature);
 void png_printChunk(struct png_chunk *chunk, struct png_image *image);
 void png_printIDAT(struct png_IDAT *idat);
-void png_printPixels(void *pixels, struct png_IHDR *ihdr);
+void png_printPixels(void *pixels, struct png_IHDR *ihdr, struct png_PLTE *plte);
 
 int png_fixedHuffmanDecode(struct bitStream *ds,
                            uint8_t *output,
