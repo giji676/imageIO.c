@@ -10,11 +10,11 @@ void png_printPixels(void *pixels, struct png_IHDR *ihdr) {
         for (uint32_t j = 0; j < ihdr->width; j++) {
             if (ihdr->bitDepth == 8 && ihdr->colorType == 2) {
                 struct rgbPixel *pixel = &((struct rgbPixel *)pixels)[i * ihdr->width + j];
-                printf("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
+                LOGI_RAW("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
             }
-            printf(" ");
+            LOGI_RAW(" ");
         }
-        printf("\n");
+        LOGI_RAW("\n");
     }
 }
 
