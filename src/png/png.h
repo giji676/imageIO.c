@@ -39,6 +39,12 @@ struct png_IDAT {
     uint32_t adler32;
 };
 
+// For combining all the IDAT chunks
+struct png_IDAT_stream {
+    uint8_t *data;
+    size_t length;
+};
+
 struct png_zTXt {
     char *keyword;
     uint8_t *compMethod;
@@ -59,6 +65,7 @@ struct png_image {
     struct png_IHDR ihdr;
     struct png_PLTE plte;
     struct png_tRNS trns;
+    struct png_IDAT_stream idat_stream;
     uint8_t *pixels;
     size_t pixel_size; // total size of pixel data in bytes
 };

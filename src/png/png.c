@@ -551,15 +551,20 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
         LOGI("BFINAL=%u BTYPE=%u\n", bfinal, btype);
 
         int res;
-        if (btype == 1) {
-            res = png_fixedHuffmanDecode(&ds, output, &output_pos, expected);
-        } else if (btype == 2) {
-            res = png_dynamicHuffmanDecode(&ds, output, &output_pos, expected);
-        } else {
-            res = png_nonCompressed(&ds, output, &output_pos, expected);
-            LOGE("Stored (BTYPE=0) blocks not supported\n");
-            free(output);
-            return NULL;
+        switch (btype) {
+            case 0:
+                res = png_nonCompressed(&ds, output, &output_pos, expected);
+                break;
+            case 1:
+                res = png_fixedHuffmanDecode(&ds, output, &output_pos, expected);
+                break;
+            case 2:
+                res = png_dynamicHuffmanDecode(&ds, output, &output_pos, expected);
+                break;
+            default:
+                LOGE("Invalud BTYPE (%u)", btype);
+                free(output);
+                return NULL;
         }
 
         if (res != 0) {
@@ -709,15 +714,18 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
         image->plte.length = chunk->length;
         image->plte.data = chunk->chunkData;
     } else if (strncmp(chunk->chunkType, "IDAT", 4) == 0) {
-        image->pixels = png_processIDAT(
-            chunk->chunkData,
-            chunk->length,
-            &image->ihdr,
-            &image->pixel_size
-        );
-        if (image->pixels == NULL) {
-            LOGE("Failed to process IDAT chunk\n");
+        size_t old_len = image->idat_stream.length;
+        size_t new_len = old_len + chunk->length;
+
+        uint8_t *tmp = realloc(image->idat_stream.data, new_len);
+        if (!tmp) {
+            LOGE("Failed to realloc IDAT buffer\n");
+            return;
         }
+
+        memcpy(tmp + old_len, chunk->chunkData, chunk->length);
+        image->idat_stream.data = tmp;
+        image->idat_stream.length = new_len;
     } else if (strncmp(chunk->chunkType, "zTXt", 4) == 0) {
         LOGI("zTXt chunk data: ...");
         png_interpretzTXt(chunk->chunkData, chunk->length);
@@ -909,6 +917,15 @@ struct output_image *png_open(char filename[]) {
         return NULL;
     }
     fclose(fptr);
+
+    if (image.idat_stream.data) {
+        image.pixels = png_processIDAT(
+            image.idat_stream.data,
+            image.idat_stream.length,
+            &image.ihdr,
+            &image.pixel_size
+        );
+    }
 
     struct output_image *output_image = png_finalImageConstruction(&image);
 
