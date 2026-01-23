@@ -296,13 +296,8 @@ int png_huffmanDecode(struct bitStream *ds,
                       int is_dynamic,
                       uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit,
                       uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
-    while (*output_pos < expected) {
+    while (1) {
         uint32_t symbol = decode_ll_symbol(ds, is_dynamic, ll_codes, ll_lengths, hlit);
-
-        if (symbol == 0xFFFFFFFF) {
-            LOGE("Invalid Huffman symbol\n");
-            return -1;
-        }
 
         // End of block
         if (symbol == 256) {
@@ -344,6 +339,7 @@ int png_huffmanDecode(struct bitStream *ds,
         return -1;
     }
 
+    LOGE("Unexpected return from huffmanDecode\n");
     return 0;
 }
 
@@ -458,6 +454,36 @@ int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
                              dist_codes, dist_lengths, hdist);
 }
 
+int png_nonCompressed(struct bitStream *ds,
+                      uint8_t *output,
+                      size_t *output_pos,
+                      uint32_t expected) {
+    uint32_t len, nlen;
+    bitstream_align_byte(ds);
+    bitstream_read(ds, 16, &len);
+    bitstream_read(ds, 16, &nlen);
+
+    if ((len ^ 0xFFFF) != nlen) {
+        LOGE("Stored block LEN/NLEN mismatch (LEN=%u NLEN=%u)\n", len, nlen);
+        return -1;
+    }
+
+    if (*output_pos + len > expected) {
+        LOGE("Stored block would overflow output buffer\n");
+        return -1;
+    }
+
+    /* ---- Copy raw bytes ---- */
+    for (uint32_t i = 0; i < len; i++) {
+        uint32_t val;
+        bitstream_read(ds, 8, &val);
+        output[*output_pos + i] = (uint8_t)val;
+    }
+
+    *output_pos += len;
+    return 0;
+}
+
 uint8_t paeth_predictor(uint8_t a, uint8_t b, uint8_t c) {
     int p = a + b - c;
     int pa = abs(p - a);
@@ -474,42 +500,38 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     int width  = ihdr->width;
     int height = ihdr->height;
     int bpp;
+
     switch (ihdr->colorType) {
-        case 2: // Truecolor RGB
-            if (ihdr->bitDepth != 8 && ihdr->bitDepth != 16) {
-                LOGE("Unsupported bit depth %u for color type %u\n", ihdr->bitDepth, ihdr->colorType);
+        case 2: // RGB
+            if (ihdr->bitDepth != 8) {
+                LOGE("Only 8-bit RGB supported\n");
                 return NULL;
             }
-            bpp = (ihdr->bitDepth/8) * 3;
+            bpp = 3;
             break;
-        case 3: // Indexed color (palette)
-            if (ihdr->bitDepth != 1 &&
-                ihdr->bitDepth != 2 &&
-                ihdr->bitDepth != 4 &&
-                ihdr->bitDepth != 8) {
-                LOGE("Unsupported bit depth %u for color type %u\n",
-                     ihdr->bitDepth, ihdr->colorType);
+
+        case 3: // Indexed
+            if (ihdr->bitDepth != 8) {
+                LOGE("Only 8-bit indexed supported\n");
                 return NULL;
             }
-            bpp = 1; // ALWAYS 1 for filtering
+            bpp = 1;
             break;
+
         default:
             LOGE("Unsupported color type %u\n", ihdr->colorType);
             return NULL;
     }
 
     struct png_IDAT idat;
-    png_readIDAT(data, length, &idat);
+    if (png_readIDAT(data, length, &idat) != 1) {
+        return NULL;
+    }
+
     png_printIDAT(&idat);
 
     struct bitStream ds;
     bitstream_init(&ds, idat.data, idat.data_length);
-    uint32_t bfinal, btype;
-    bitstream_read(&ds, 1, &bfinal);
-    bitstream_read(&ds, 2, &btype);
-
-    LOGI("BFINAL: %u ", bfinal);
-    LOGI_RAW("BTYPE: %u\n", btype);
 
     size_t expected = height * (width * bpp + 1);
     uint8_t *output = malloc(expected);
@@ -517,76 +539,78 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
         LOGE("Failed to allocate output buffer\n");
         return NULL;
     }
+
     size_t output_pos = 0;
 
-    if (btype == 1) {
-        if (png_fixedHuffmanDecode(&ds, output, &output_pos, expected) == -1) {
-            LOGE("Fixed decompression failed\n");
+    /* ---- ZLIB / DEFLATE BLOCK LOOP ---- */
+    uint32_t bfinal, btype;
+    while (1) {
+        bitstream_read(&ds, 1, &bfinal);
+        bitstream_read(&ds, 2, &btype);
+
+        LOGI("BFINAL=%u BTYPE=%u\n", bfinal, btype);
+
+        int res;
+        if (btype == 1) {
+            res = png_fixedHuffmanDecode(&ds, output, &output_pos, expected);
+        } else if (btype == 2) {
+            res = png_dynamicHuffmanDecode(&ds, output, &output_pos, expected);
+        } else {
+            res = png_nonCompressed(&ds, output, &output_pos, expected);
+            LOGE("Stored (BTYPE=0) blocks not supported\n");
             free(output);
             return NULL;
         }
-    } else if (btype == 2) {
-        if (png_dynamicHuffmanDecode(&ds, output, &output_pos, expected) == -1) {
-            LOGE("Dynamic decompression failed\n");
+
+        if (res != 0) {
+            LOGE("DEFLATE block decode failed\n");
             free(output);
             return NULL;
         }
+
+        if (bfinal) break;
     }
 
-    if (!png_compareAdler32(&idat, output, output_pos)) {
-        LOGE("Adler32 NOT MATCHING\n");
-    }
-    int row_bytes = bpp * width + 1;
+    LOGI("Inflate done: %zu / %zu bytes\n", output_pos, expected);
 
+    if (png_compareAdler32(&idat, output, output_pos) != 1) {
+        LOGE("Adler32 mismatch\n");
+    }
+
+    /* ---- PNG FILTERING ---- */
+    int row_bytes = width * bpp + 1;
     uint8_t *final_output = malloc(width * height * bpp);
+    if (!final_output) {
+        free(output);
+        return NULL;
+    }
+
     int idx = 0;
 
     for (int row = 0; row < height; row++) {
         int row_start = row * row_bytes;
         uint8_t filter = output[row_start];
 
-        for (int i = 0; i < bpp * width; i++) {
+        for (int i = 0; i < width * bpp; i++) {
             uint8_t raw = output[row_start + 1 + i];
             uint8_t recon;
 
-            if (filter == 0) { // None
-                recon = raw;
-            } else if (filter == 1) { // Sub
-                uint8_t left = 0;
-                if (i >= bpp) {
-                    left = final_output[idx - bpp];
-                }
-                recon = raw + left;
-            } else if (filter == 2) { // Up
-                uint8_t up = 0;
-                if (row > 0) {
-                    up = final_output[idx - (bpp * width)];
-                }
-                recon = raw + up;
-            } else if (filter == 3) { // Average
-                uint8_t left = 0;
-                if (i >= bpp) {
-                    left = final_output[idx - bpp];
-                }
-                uint8_t up = 0;
-                if (row > 0) {
-                    up = final_output[idx - (bpp * width)];
-                }
-                recon = raw + (uint8_t)((left + up) / 2);
-            } else if (filter == 4) { // Paeth
-                uint8_t left = 0;
-                if (i >= bpp) {
-                    left = final_output[idx - bpp];
-                }
-                uint8_t up = 0;
-                if (row > 0) {
-                    up = final_output[idx - (bpp * width)];
-                }
-                uint8_t up_left = 0;
-                if (row > 0 && i >= bpp) {
-                    up_left = final_output[idx - (bpp * width) - bpp];
-                }
-                recon = raw + paeth_predictor(left, up, up_left);
+            uint8_t left = (i >= bpp) ? final_output[idx - bpp] : 0;
+            uint8_t up   = (row > 0)  ? final_output[idx - width * bpp] : 0;
+            uint8_t up_left =
+                (row > 0 && i >= bpp) ? final_output[idx - width * bpp - bpp] : 0;
+
+            switch (filter) {
+                case 0: recon = raw; break;
+                case 1: recon = raw + left; break;
+                case 2: recon = raw + up; break;
+                case 3: recon = raw + ((left + up) >> 1); break;
+                case 4: recon = raw + paeth_predictor(left, up, up_left); break;
+                default:
+                    LOGE("Unknown filter %u\n", filter);
+                    free(output);
+                    free(final_output);
+                    return NULL;
             }
 
             final_output[idx++] = recon;
@@ -839,10 +863,12 @@ struct output_image *png_finalImageConstruction(struct png_image *image) {
             output_image->pixels[i * output_image->bpp + 2] = pal[2];
 
             if (has_alpha) {
-                if (idx < image->trns.length)
+                if (idx < image->trns.length) {
+                    // printf("idx: %u\n", idx);
                     output_image->pixels[i * output_image->bpp + 3] = image->trns.alpha[idx];
-                else
+                } else {
                     output_image->pixels[i * output_image->bpp + 3] = 255;
+                }
             }
         }
         return output_image;
