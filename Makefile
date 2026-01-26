@@ -8,6 +8,11 @@ ifeq ($(DEBUG),1)
     CFLAGS += -g -O0
 endif
 
+ifeq ($(PROFILE),1)
+    CFLAGS += -g -O2 -pg
+    LDFLAGS += -pg
+endif
+
 # Directories
 SRC_DIR = src
 BUILD_DIR = build

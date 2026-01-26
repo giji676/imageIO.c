@@ -247,7 +247,13 @@ int png_distFromSym(struct bitStream *ds, uint32_t symbol) {
     return dist_base[symbol] + extra_val;
 }
 
-uint32_t decode_symbol(struct bitStream *ds, uint32_t *codes, uint8_t *lengths, uint32_t num_symbols, uint32_t max_len) {
+uint32_t decode_symbol(
+    struct bitStream *ds,
+    uint32_t *codes,
+    uint8_t *lengths,
+    uint32_t num_symbols,
+    uint32_t max_len
+) {
     uint32_t code = 0;
 
     for (uint32_t len = 1; len <= max_len; len++) {
