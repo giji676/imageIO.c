@@ -1,80 +1,10 @@
-#include "png.h"
-#include "../crc/crc.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include "png.h"
+#include "png_print.h"
+#include "../crc/crc.h"
 #include "../log.h"
-
-void png_printPixels(void *pixels, struct png_IHDR *ihdr, struct png_PLTE *plte) {
-    for (uint32_t i = 0; i < ihdr->height; i++) {
-        for (uint32_t j = 0; j < ihdr->width; j++) {
-            switch (ihdr->colorType) {
-                case 2:
-                    if (ihdr->bitDepth == 8) {
-                        struct rgbPixel *pixel = &((struct rgbPixel *)pixels)[i * ihdr->width + j];
-                        LOGI_RAW("(%d,%d,%d)", pixel->r, pixel->g, pixel->b);
-                    }
-                    break;
-                case 3:
-                    if (ihdr->bitDepth == 8) {
-                        uint8_t *indices = (uint8_t *)pixels;
-
-                        uint8_t index = indices[i * ihdr->width + j];
-
-                        if ((uint32_t)(index * 3 + 2) >= plte->length) {
-                            LOGE("Palette index out of range: %u\n", index);
-                            break;
-                        }
-
-                        uint8_t r = plte->data[index * 3 + 0];
-                        uint8_t g = plte->data[index * 3 + 1];
-                        uint8_t b = plte->data[index * 3 + 2];
-
-                        LOGI_RAW("(%u,%u,%u)", r, g, b);
-                    }
-                    break;
-            }
-            LOGI_RAW(" ");
-        }
-        LOGI_RAW("\n");
-    }
-}
-
-int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos) {
-    uint32_t a = 1;
-    uint32_t b = 0;
-
-    for (size_t i = 0; i < output_pos; i++) {
-        a = (a + output[i]) % 65521;
-        b = (b + a) % 65521;
-    }
-
-    uint32_t calculated_adler32 = (b << 16) | a;
-    if (calculated_adler32 != idat->adler32) {
-        return -1;
-    }
-    return 1;
-}
-
-void png_printIDAT(struct png_IDAT *idat) {
-    LOGI("CMF: 0x%02X\n", idat->cmf);
-    LOGI("CM: %u\n", idat->cm);
-    LOGI("CINFO: %u\n", idat->cinfo);
-    LOGI("FLG: 0x%02X\n", idat->flg);
-    LOGI("FCHECK: %u\n", idat->fcheck);
-    LOGI("FDICT: %u\n", idat->fdict);
-    LOGI("FLEVEL: %u\n", idat->flevel);
-    LOGI("DATA_LENGTH: %u\n", idat->data_length);
-    LOGI("DATA: ...\n");
-    // for (uint32_t i = 0; i < idat->data_length; ++i) {
-    //     LOGI("%02x ", idat->data[i]);
-    //     if (i > 0 && i % 16 == 15) {
-    //         LOGI("\n");
-    //     }
-    // }
-    // printf("\n");
-    LOGI("ADLER32: 0x%08X\n", idat->adler32);
-}
 
 int png_readIDAT(void *data, uint32_t length, struct png_IDAT *idat) {
     struct bitStream bs;
@@ -500,6 +430,22 @@ uint8_t paeth_predictor(uint8_t a, uint8_t b, uint8_t c) {
     return c;
 }
 
+int png_compareAdler32(struct png_IDAT *idat, uint8_t *output, size_t output_pos) {
+    uint32_t a = 1;
+    uint32_t b = 0;
+
+    for (size_t i = 0; i < output_pos; i++) {
+        a = (a + output[i]) % 65521;
+        b = (b + a) % 65521;
+    }
+
+    uint32_t calculated_adler32 = (b << 16) | a;
+    if (calculated_adler32 != idat->adler32) {
+        return -1;
+    }
+    return 1;
+}
+
 uint8_t *png_processIDAT(void *data, uint32_t length,
                          struct png_IHDR *ihdr,
                          size_t *out_size) {
@@ -634,18 +580,6 @@ uint8_t *png_processIDAT(void *data, uint32_t length,
     return final_output;
 }
 
-void png_printIHDR(struct png_IHDR *ihdr) {
-    uint32_t width = __builtin_bswap32(ihdr->width);
-    uint32_t height = __builtin_bswap32(ihdr->height);
-    LOGI("width: %u\n", width);
-    LOGI("height: %u\n", height);
-    LOGI("bitDepth: %u\n", ihdr->bitDepth);
-    LOGI("colorType: %u\n", ihdr->colorType);
-    LOGI("compressionMethod: %u\n", ihdr->compressionMethod);
-    LOGI("filterMethod: %u\n", ihdr->filterMethod);
-    LOGI("interlaceMethod: %u\n", ihdr->interlaceMethod);
-}
-
 void png_interpretzTXt(void *data, uint32_t length) {
     if (data == NULL || length == 0) {
         LOGE("Invalid zTXt data\n");
@@ -752,16 +686,6 @@ void png_printChunk(struct png_chunk *chunk, struct png_image *image) {
     if (!png_compareCRC(chunk)) {
         LOGE("CRC NOT MATCHING\n");
     }
-}
-
-void png_printFileSignature(struct png_fileSignature *fileSignature) {
-    LOGI("\n");
-    LOGI("File Signature\n");
-    LOGI("signature: ");
-    for (int i = 0; i < (int)sizeof(fileSignature->signature); ++i) {
-        LOGI_RAW("%02x ", (unsigned char)fileSignature->signature[i]);
-    }
-    LOGI_RAW("\n");
 }
 
 int png_readFileSignature(FILE *fptr, struct png_fileSignature *fileSignature) {
