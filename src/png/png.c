@@ -177,7 +177,7 @@ int png_distFromSym(struct bitStream *ds, uint32_t symbol) {
     return dist_base[symbol] + extra_val;
 }
 
-uint32_t decode_symbol(
+uint32_t png_decodeSymbol(
     struct bitStream *ds,
     uint32_t *codes,
     uint8_t *lengths,
@@ -203,10 +203,10 @@ uint32_t decode_symbol(
 }
 
 // Decode one symbol - works for both fixed and dynamic Huffman
-uint32_t decode_ll_symbol(struct bitStream *ds, int is_dynamic, 
+uint32_t png_decodeLlSymbol(struct bitStream *ds, int is_dynamic, 
                           uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit) {
     if (is_dynamic) {
-        return decode_symbol(ds, ll_codes, ll_lengths, hlit, 15);
+        return png_decodeSymbol(ds, ll_codes, ll_lengths, hlit, 15);
     } else {
         uint32_t symbol;
         png_decodeFixedHuffmanSymbol(ds, &symbol);
@@ -217,7 +217,7 @@ uint32_t decode_ll_symbol(struct bitStream *ds, int is_dynamic,
 uint32_t decode_dist_symbol(struct bitStream *ds, int is_dynamic,
                             uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
     if (is_dynamic) {
-        return decode_symbol(ds, dist_codes, dist_lengths, hdist, 15);
+        return png_decodeSymbol(ds, dist_codes, dist_lengths, hdist, 15);
     } else {
         uint32_t dist_sym;
         bitstream_read(ds, 5, &dist_sym);
@@ -233,7 +233,7 @@ int png_huffmanDecode(struct bitStream *ds,
                       uint32_t *ll_codes, uint8_t *ll_lengths, uint32_t hlit,
                       uint32_t *dist_codes, uint8_t *dist_lengths, uint32_t hdist) {
     while (1) {
-        uint32_t symbol = decode_ll_symbol(ds, is_dynamic, ll_codes, ll_lengths, hlit);
+        uint32_t symbol = png_decodeLlSymbol(ds, is_dynamic, ll_codes, ll_lengths, hlit);
 
         // End of block
         if (symbol == 256) {
@@ -279,7 +279,7 @@ int png_huffmanDecode(struct bitStream *ds,
     return 0;
 }
 
-void build_canonical_huffman(uint8_t *lengths, uint32_t num_symbols,
+void png_buildCanonicalHuffman(uint8_t *lengths, uint32_t num_symbols,
                              uint32_t *codes, uint32_t max_bits) {
     uint32_t bl_count[16] = {0};
 
@@ -337,7 +337,7 @@ int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
 
     // Build code-length tree
     uint32_t codes[19];
-    build_canonical_huffman(cl_lengths, 19, codes, 8);
+    png_buildCanonicalHuffman(cl_lengths, 19, codes, 8);
 
     // Decode literal/length and distance code lengths
     uint8_t ll_lengths[288] = {0};
@@ -347,7 +347,7 @@ int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
     uint8_t last_value = 0;
 
     while (decoded < total_codes) {
-        uint32_t symbol = decode_symbol(ds, codes, cl_lengths, 19, 7);
+        uint32_t symbol = png_decodeSymbol(ds, codes, cl_lengths, 19, 7);
 
         if (symbol < 16) {
             uint8_t *target = (decoded < hlit) ? &ll_lengths[decoded] : &dist_lengths[decoded - hlit];
@@ -381,8 +381,8 @@ int png_dynamicHuffmanDecode(struct bitStream *ds, uint8_t *output,
     // Build literal/length and distance trees
     uint32_t ll_codes[288];
     uint32_t dist_codes[32];
-    build_canonical_huffman(ll_lengths, hlit, ll_codes, 16);
-    build_canonical_huffman(dist_lengths, hdist, dist_codes, 16);
+    png_buildCanonicalHuffman(ll_lengths, hlit, ll_codes, 16);
+    png_buildCanonicalHuffman(dist_lengths, hdist, dist_codes, 16);
 
     // Decode using unified function
     return png_huffmanDecode(ds, output, output_pos, expected,
