@@ -43,68 +43,85 @@ void fixed_huffman(struct bitStream *bs, uint8_t *data, int size) {
     bitstream_flush(bs);
 }
 
-uint8_t *png_deflate(struct png_image *image, struct png_IDAT *idat, int *out_len) {
+uint8_t *png_deflate(struct png_image *image,
+                     struct png_IDAT *idat,
+                     int *out_len)
+{
     int bpp = 3;
     int row_bytes = image->ihdr.width * bpp;
 
-    // Prepare uncompressed data with filters
+    /* ---- Prepare filtered data ---- */
     idat->data_length = (row_bytes + 1) * image->ihdr.height;
     idat->data = malloc(idat->data_length);
 
     for (uint32_t i = 0; i < image->ihdr.height; i++) {
         int row_start = i * (row_bytes + 1);
+
         if (i == 0) {
             idat->data[row_start] = 0; // None
-            for (int x = 0; x < row_bytes; x++)
-                idat->data[row_start + 1 + x] = image->pixels[x];
+            memcpy(idat->data + row_start + 1,
+                   image->pixels,
+                   row_bytes);
         } else {
             idat->data[row_start] = 1; // Sub
             for (int x = 0; x < row_bytes; x++) {
-                uint8_t raw = image->pixels[i * row_bytes + x];
-                uint8_t left = (x >= bpp) ? image->pixels[i * row_bytes + x - bpp] : 0;
+                uint8_t raw  = image->pixels[i * row_bytes + x];
+                uint8_t left = (x >= bpp)
+                    ? image->pixels[i * row_bytes + x - bpp]
+                    : 0;
                 idat->data[row_start + 1 + x] = raw - left;
             }
         }
     }
 
-    // Allocate output buffer: safe overestimate
-    int max_out = idat->data_length + 6 + 5; // zlib header + worst-case compressed + adler
+    /* ---- Allocate output ---- */
+    int max_out = idat->data_length + 6 + 5;
     uint8_t *out_buf = malloc(max_out);
-    struct bitStream bs = { .data = out_buf, .bitpos = 0, .length = max_out };
 
-    // Zlib header
-    idat->cm = 8;
-    idat->cinfo = 0;
-    idat->cmf = (idat->cinfo << 4) | idat->cm;
+    struct bitStream bs = {
+        .data = out_buf,
+        .length = max_out,
+        .bytepos = 0
+    };
+
+    /* ---- ZLIB header (BYTE ALIGNED) ---- */
+    idat->cm     = 8;
+    idat->cinfo  = 0;
+    idat->cmf    = (idat->cinfo << 4) | idat->cm;
     idat->flevel = 2;
-    idat->fdict = 0;
-    idat->fcheck = 31 - ((idat->cmf << 8 | (idat->flevel << 1) | idat->fdict)) % 31;
-    idat->flg = (idat->flevel << 1 | idat->fdict) << 5 | idat->fcheck;
+    idat->fdict  = 0;
+    idat->fcheck = 31 - ((idat->cmf << 8 |
+                          (idat->flevel << 6)) % 31);
+    idat->flg    = (idat->flevel << 6) |
+                   (idat->fdict << 5) |
+                   idat->fcheck;
 
-    bitstream_write(&bs, 4, idat->cm);
-    bitstream_write(&bs, 4, idat->cinfo);
-    bitstream_write(&bs, 5, idat->fcheck);
-    bitstream_write(&bs, 1, idat->fdict);
-    bitstream_write(&bs, 2, idat->flevel);
+    out_buf[bs.bytepos++] = idat->cmf;
+    out_buf[bs.bytepos++] = idat->flg;
+
+    /* ---- DEFLATE block header ---- */
     bitstream_write(&bs, 1, 1); // BFINAL
-    bitstream_write(&bs, 2, 1); // BTYPE fixed Huffman
+    bitstream_write(&bs, 2, 1); // BTYPE = fixed Huffman
 
     fixed_huffman(&bs, idat->data, idat->data_length);
 
-    // Adler32
+    /* ---- Adler32 ---- */
     uint32_t a = 1, b = 0;
     for (size_t i = 0; i < idat->data_length; i++) {
         a = (a + idat->data[i]) % 65521;
         b = (b + a) % 65521;
     }
     free(idat->data);
-    uint32_t adler32 = __builtin_bswap32((b << 16) | a);
-    bitstream_write(&bs, 32, adler32);
 
-    // Exact length of compressed chunk
-    int final_len = (bs.bitpos + 7) / 8;
-    *out_len = final_len;
+    uint32_t adler32 = (b << 16) | a;
 
+    bitstream_flush(&bs); // ensure byte alignment
+    out_buf[bs.bytepos++] = (adler32 >> 24) & 0xFF;
+    out_buf[bs.bytepos++] = (adler32 >> 16) & 0xFF;
+    out_buf[bs.bytepos++] = (adler32 >>  8) & 0xFF;
+    out_buf[bs.bytepos++] =  adler32        & 0xFF;
+
+    *out_len = bs.bytepos;
     return out_buf;
 }
 

@@ -19,7 +19,7 @@ struct __attribute__((packed)) rgbaPixel {
 
 struct bitStream {
     uint8_t *data;   // pointer to the byte buffer
-    size_t bitpos;   // current bit position in the stream
+    size_t bytepos;   // byte position in the stream
     size_t length;   // total length of data in bytes
 };
 
